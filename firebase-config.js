@@ -1,25 +1,15 @@
-/* Monen koneen synkka (esim. 2 laskijakonetta + iso näyttö eri koneella).
- *
- * Kun tähän on täytetty Firebase-projektin asetukset, kaikki koneet jakavat
- * saman äänimäärän reaaliajassa. Jos tämä jää nulliksi, sovellus toimii
- * paikallistilassa (vain saman koneen selainikkunat synkkaavat).
- *
- * Näin otat käyttöön (n. 3 min):
- *  1. Mene https://console.firebase.google.com/ ja luo uusi projekti (ilmainen).
- *  2. Build → Realtime Database → Create database → aloita "test mode".
- *  3. Project settings (ratas) → "Your apps" → Web (</>) → rekisteröi sovellus.
- *  4. Kopioi näkyvä firebaseConfig-objekti tähän alle (varmista että
- *     databaseURL on mukana; se näyttää tältä: https://<projekti>-default-rtdb.firebasedatabase.app).
- */
+/* Monen koneen synkka — Firebase Realtime Database.
+ * Kun tämä on täytetty, kaikki koneet jakavat saman äänimäärän reaaliajassa.
+ * (Nämä arvot eivät ole salaisuuksia: Firebasen web-config kuuluu selainkoodiin;
+ *  turva hoidetaan tietokannan säännöillä.) */
 
-window.FIREBASE_CONFIG = null;
-
-/* Esimerkki täytettynä (korvaa omilla arvoillasi ja poista kommentti):
 window.FIREBASE_CONFIG = {
-  apiKey: "AIza...",
-  authDomain: "maitoset-vaalit.firebaseapp.com",
-  databaseURL: "https://maitoset-vaalit-default-rtdb.firebasedatabase.app",
-  projectId: "maitoset-vaalit",
-  appId: "1:1234567890:web:abcdef"
+  apiKey: "AIzaSyCwP6MOFKE1_r7U5WTIdUDb1pFFpFMjXbk",
+  authDomain: "maitoisten-vaalit.firebaseapp.com",
+  databaseURL: "https://maitoisten-vaalit-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "maitoisten-vaalit",
+  storageBucket: "maitoisten-vaalit.firebasestorage.app",
+  messagingSenderId: "811478168172",
+  appId: "1:811478168172:web:a4055547b3d592c6471e49",
+  measurementId: "G-Q810614E59"
 };
-*/
