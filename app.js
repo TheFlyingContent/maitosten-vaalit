@@ -228,7 +228,7 @@ function saveMeta(title, candidates) {
 const app = document.getElementById('app');
 
 function currentView() {
-  const h = location.hash.replace(/^#\//, '');
+  const h = location.hash.replace(/^#\//, '').split('?')[0];   // katkaise esim. "results?fs" -> "results"
   return ['count', 'results', 'setup'].includes(h) ? h : 'home';
 }
 
@@ -240,6 +240,7 @@ function render() {
   document.body.classList.toggle('fs', view === 'results' && location.hash.includes('fs'));
   app.classList.toggle('wide', view === 'results');
   updateConn();
+  if (view !== 'results') resultsSig = null;   // rakenna tulokset uudelleen kun palataan näkymään
 
   if (!ready) {
     app.innerHTML = `<div class="empty-note"><h3>Yhdistetään pilveen…</h3>Haetaan ehdokkaita ja ääniä.</div>`;
@@ -376,15 +377,18 @@ function flashCard(id) {
 }
 
 /* ---------------- Tulokset ---------------- */
-function renderResults() {
-  const c = counts();
-  const total = totalVotes();
-  const ranked = [...state.candidates].sort((a, b) => c[b.id] - c[a.id]);
-  const maxCount = Math.max(1, ...state.candidates.map(x => c[x.id]));
-  const leaderCount = ranked.length ? c[ranked[0].id] : 0;
-  const isFs = location.hash.includes('fs');
+let resultsSig = null;   // rakennetaan luuranko uudelleen vain kun ehdokkaat / kokonäyttö muuttuu
 
+// Kasvava "katto" pylväille: parilla äänellä pylväs ei ole täysi, vaan täyttyy äänien karttuessa
+function niceCeiling(maxCount) {
+  if (maxCount <= 0) return 1;
+  const step = maxCount < 10 ? 2 : maxCount < 30 ? 5 : maxCount < 100 ? 10 : 25;
+  return (Math.floor(maxCount / step) + 1) * step;
+}
+
+function buildResults(list, isFs) {
   app.innerHTML = `
+    ${isFs ? '' : `
     <div class="results-head">
       <div>
         <h1>${esc(state.title)}</h1>
@@ -392,48 +396,83 @@ function renderResults() {
       </div>
       <div style="display:flex; align-items:flex-end; gap:22px;">
         <div class="results-total">
-          <div class="num">${total}</div>
+          <div class="num" id="resTotal">0</div>
           <div class="lbl">Ääntä laskettu</div>
         </div>
-        <button class="btn btn-ghost" id="fsBtn">${isFs ? '✕ Poistu koko&shy;näytöstä' : '⛶ Koko näyttö'}</button>
+        <button class="btn btn-ghost" id="fsBtn">⛶ Koko näyttö</button>
       </div>
-    </div>
-    ${total === 0 ? `<div class="empty-note"><h3>Ei vielä ääniä</h3>Kun laskenta alkaa, pylväät kasvavat tähän reaaliajassa.</div>` : ''}
+    </div>`}
+    <div class="empty-note" id="resEmpty"><h3>Ei vielä ääniä</h3>Kun laskenta alkaa, pylväät kasvavat tähän reaaliajassa.</div>
     <div class="chart">
       <div class="bars">
-        ${ranked.map(cand => {
-          const n = c[cand.id];
-          const h = (n / maxCount) * 100;
-          const isLeader = n > 0 && n === leaderCount;
-          return `
-            <div class="bar-col ${isLeader ? 'leader' : ''}">
-              <div class="bar-figures">
-                <div class="bar-pct" style="color:${cand.color}">${fmtPct(pct(n, total))}</div>
-                <div class="bar-count">${n} ääntä</div>
-              </div>
-              <div class="bar-track">
-                <div class="bar" style="--c:${cand.color}; height:${h}%"></div>
-              </div>
-              <div class="bar-foot">
-                ${avatarHTML(cand, 'bar-avatar')}
-                <div class="bar-name">${isLeader ? '<span class="bar-crown">👑</span> ' : ''}${esc(cand.name)}</div>
-              </div>
+        ${list.map(cand => `
+          <div class="bar-col" data-id="${cand.id}">
+            <div class="bar-figures">
+              <div class="bar-num" style="color:${cand.color}">0</div>
+              <div class="bar-num-lbl">ääntä</div>
             </div>
-          `;
-        }).join('')}
+            <div class="bar-track">
+              <div class="bar" style="--c:${cand.color}; height:0%"></div>
+            </div>
+            <div class="bar-foot">
+              ${avatarHTML(cand, 'bar-avatar')}
+              <div class="bar-name"><span class="bar-crown">👑</span>${esc(cand.name)}</div>
+            </div>
+          </div>
+        `).join('')}
       </div>
     </div>
+    ${isFs ? '<button id="fsExit" class="fs-exit" title="Poistu kokonäytöstä (Esc)">✕</button>' : ''}
   `;
 
-  app.querySelector('#fsBtn').addEventListener('click', () => {
-    if (isFs) { location.hash = '#/results'; }
-    else {
-      location.hash = '#/results?fs';
-      if (document.documentElement.requestFullscreen) {
-        document.documentElement.requestFullscreen().catch(() => {});
-      }
-    }
+  const fsBtn = app.querySelector('#fsBtn');
+  if (fsBtn) fsBtn.addEventListener('click', enterFullscreen);
+  const fsExit = app.querySelector('#fsExit');
+  if (fsExit) fsExit.addEventListener('click', exitFullscreen);
+}
+
+function renderResults() {
+  const c = counts();
+  const total = totalVotes();
+  const isFs = location.hash.includes('fs');
+  const list = state.candidates;               // kiinteä järjestys -> pylväät kasvavat paikallaan sulavasti
+  const maxCount = Math.max(0, ...list.map(x => c[x.id]));
+  const ceiling = niceCeiling(maxCount);
+
+  // Rakenna luuranko vain kun rakenne muuttuu; muuten päivitä arvot paikallaan (animoituu sulavasti)
+  const sig = JSON.stringify(list.map(x => [x.id, x.name, x.color, !!x.photo])) + '|' + isFs;
+  if (sig !== resultsSig) {
+    buildResults(list, isFs);
+    resultsSig = sig;
+    void app.offsetHeight;                      // pakota asettelu, jotta ensimmäinenkin kasvu animoituu 0:sta
+  }
+
+  const totalEl = app.querySelector('#resTotal');
+  if (totalEl) totalEl.textContent = total;
+  const emptyEl = app.querySelector('#resEmpty');
+  if (emptyEl) emptyEl.style.display = total === 0 ? '' : 'none';
+
+  list.forEach(cand => {
+    const col = app.querySelector(`.bar-col[data-id="${cand.id}"]`);
+    if (!col) return;
+    const n = c[cand.id];
+    const isLeader = n > 0 && n === maxCount;
+    col.querySelector('.bar').style.height = (n / ceiling * 100) + '%';
+    col.querySelector('.bar-num').textContent = n;
+    col.querySelector('.bar-num-lbl').textContent = (n === 1 ? 'ääni' : 'ääntä');
+    col.classList.toggle('leader', isLeader);
+    col.querySelector('.bar-crown').style.visibility = isLeader ? 'visible' : 'hidden';
   });
+}
+
+function enterFullscreen() {
+  location.hash = '#/results?fs';
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+}
+function exitFullscreen() {
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  location.hash = '#/results';
 }
 
 /* ---------------- Asetukset ---------------- */
@@ -593,6 +632,11 @@ if (MODE === 'cloud') {
     }
   });
 }
+
+// Esc poistuu selaimen kokonäytöstä -> synkkaa myös hash takaisin normaaliin
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && location.hash.includes('fs')) location.hash = '#/results';
+});
 
 window.addEventListener('hashchange', render);
 render();
