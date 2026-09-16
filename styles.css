@@ -47,6 +47,11 @@ html, body {
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
 .brand-text strong { font-size: 19px; letter-spacing: .2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-sub { font-size: 12.5px; opacity: .75; text-transform: uppercase; letter-spacing: 2px; }
+.conn { text-transform: none; letter-spacing: .2px; font-weight: 600; }
+.cdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: baseline; }
+.cdot.ok { background: #3ad07a; box-shadow: 0 0 0 3px rgba(58,208,122,.28); }
+.cdot.off { background: #ffcc4d; }
+.cdot.local { background: #9fb3c8; }
 
 .nav { display: flex; gap: 8px; flex-shrink: 0; }
 .nav-btn {

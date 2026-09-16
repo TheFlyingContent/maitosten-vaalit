@@ -12,14 +12,33 @@ pylväsdiagrammia.
   äänimäärät, prosentit ja kärjessä oleva korostettuna. Koko näytön tila isolle näytölle.
 - **Asetukset** — muokkaa vaalin nimeä ja ehdokkaita (nimet + värit).
 
-## Reaaliaikainen synkka
+## Kaksi toimintatilaa
 
-Laskenta- ja tulosnäkymä jakavat tilan `localStorage`n kautta ja synkataan reaaliajassa
-`BroadcastChannel`illa. Voit siis avata **tulosnäkymän omaan selainikkunaan** isolle näytölle
-ja pitää **laskentanäkymän** toisessa ikkunassa/välilehdessä — äänet ilmestyvät pylväisiin heti.
+Sovellus tunnistaa tilan automaattisesti `firebase-config.js`-tiedostosta:
 
-> Huom: synkka toimii saman selaimen ikkunoiden/välilehtien välillä samalla koneella.
-> Jos iso näyttö on eri kone, peilaa näyttö (esim. HDMI) tai käytä samaa konetta kahdella näytöllä.
+### 1. Pilvitila — useampi kone (suositeltu isoon näyttöön eri koneella)
+
+Kun `firebase-config.js`:ään on täytetty Firebase-asetukset, **kaikki koneet jakavat saman
+äänimäärän reaaliajassa**: esim. 2 laskijakonetta kirjaavat ääniä ja kolmas kone näyttää
+pylväät isolla näytöllä. Äänet tallennetaan lisäyslokina (jokainen ääni oma rivi), joten
+usea laskija voi kirjata yhtä aikaa ilman ristiriitoja. "Kumoa viimeisin" kumoaa vain sen
+koneen oman edellisen äänen. Topbarissa näkyy vihreä **"Pilvi yhdistetty"**.
+
+**Firebasen käyttöönotto (n. 3 min, ilmainen):**
+1. https://console.firebase.google.com/ → luo projekti.
+2. Build → **Realtime Database** → Create database → *test mode*.
+3. Project settings → Your apps → **Web (`</>`)** → rekisteröi sovellus.
+4. Kopioi `firebaseConfig`-objekti tiedostoon `firebase-config.js` (varmista että
+   `databaseURL` on mukana). Commitoi ja pushaa → Vercel deployaa automaattisesti.
+
+> Turvahuomio: *test mode* sallii julkisen luku/kirjoituksen. Lyhyeen kertaluontoiseen
+> äänestykseen se riittää; nollaa laskenta ("Nollaa laskenta") ennen oikeaa laskentaa.
+
+### 2. Paikallistila — yksi kone
+
+Jos `firebase-config.js` on `null`, laskenta- ja tulosnäkymä synkkaavat vain **saman koneen
+saman selaimen** ikkunoiden välillä (`localStorage` + `BroadcastChannel`). Avaa tulosnäkymä
+omaan ikkunaan ja peilaa/laajenna se isolle näytölle (HDMI). Topbarissa näkyy harmaa **"Paikallinen"**.
 
 ## Ajaminen paikallisesti
 

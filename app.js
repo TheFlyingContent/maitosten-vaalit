@@ -1,36 +1,54 @@
 /* Maitosten Opiston presidentinvaalit — äänten laskenta
- * Staattinen vanilla-JS-sovellus. Ei backendiä.
- * Laskenta- ja tulosnäkymä synkataan reaaliajassa BroadcastChannelilla + localStoragella,
- * joten tulosnäkymän voi avata omaan ikkunaan isolle näytölle. */
+ * Kaksi toimintatilaa:
+ *  - PILVI  (Firebase Realtime Database): sama tila jaetaan kaikille koneille, joten
+ *           useampi laskijakone + iso näyttö näkevät saman äänimäärän reaaliajassa.
+ *  - PAIKALLINEN (localStorage + BroadcastChannel): vain saman koneen ikkunat,
+ *           käytetään jos Firebase-asetuksia ei ole annettu (firebase-config.js).
+ * Äänet tallennetaan lisäyslokina (jokainen ääni oma rivi) -> kaksi laskijaa voi
+ * kirjata yhtä aikaa ilman ristiriitoja; laskurit johdetaan lokista. */
 
 const STORAGE_KEY = 'maitosten-vaalit-v1';
 const CHANNEL_NAME = 'maitosten-vaalit';
+const DB_ROOT = 'elections/maitoset';           // jaettu polku pilvitilassa
+
+const FB = window.FIREBASE_CONFIG || null;
+const MODE = (FB && FB.databaseURL) ? 'cloud' : 'local';
 
 const PALETTE = [
   '#003580', '#c8102e', '#178a3f', '#e07b00', '#5b2d8e',
   '#0091ad', '#b5179e', '#2d6a4f', '#7048e8', '#d1495b',
 ];
 
-/* ---------------- Tila ---------------- */
-const DEFAULT_STATE = () => ({
-  title: 'Maitosten Opiston presidentinvaalit',
-  candidates: [
-    { id: 'c1', name: 'Alexander Virtanen', color: PALETTE[0] },
-    { id: 'c2', name: 'Sanna Korhonen',     color: PALETTE[1] },
-    { id: 'c3', name: 'Pekka Nieminen',     color: PALETTE[2] },
-    { id: 'c4', name: 'Li Mäkinen',         color: PALETTE[3] },
-    { id: 'c5', name: 'Olli Hämäläinen',    color: PALETTE[4] },
-    { id: 'c6', name: 'Riikka Laine',       color: PALETTE[5] },
-  ],
-  log: [], // [{id, t}] äänet aikajärjestyksessä — laskurit johdetaan tästä, kumoaminen = pop
-});
+const DEFAULT_TITLE = 'Maitosten Opiston presidentinvaalit';
+const DEFAULT_CANDIDATES = () => ([
+  { id: 'c1', name: 'Alexander Virtanen', color: PALETTE[0], photo: null },
+  { id: 'c2', name: 'Sanna Korhonen',     color: PALETTE[1], photo: null },
+  { id: 'c3', name: 'Pekka Nieminen',     color: PALETTE[2], photo: null },
+  { id: 'c4', name: 'Li Mäkinen',         color: PALETTE[3], photo: null },
+  { id: 'c5', name: 'Olli Hämäläinen',    color: PALETTE[4], photo: null },
+  { id: 'c6', name: 'Riikka Laine',       color: PALETTE[5], photo: null },
+]);
 
-let state = load();
+/* Yhtenäinen muistinvarainen tila, jonka näkymät lukevat.
+ *   log: [{id, t, key?}]  (key on olemassa vain pilvitilassa kumoamista varten) */
+let state = { title: DEFAULT_TITLE, candidates: [], log: [] };
+let ready = (MODE === 'local');   // pilvitilassa true kun ensimmäinen data on saapunut
+let connected = false;
 
+/* Konekohtainen tunniste: pilvitilassa "kumoa viimeisin" poistaa vain tämän koneen äänet */
+const DEVICE_ID = (() => {
+  let d = localStorage.getItem('vaalit-device');
+  if (!d) { d = Math.random().toString(36).slice(2); localStorage.setItem('vaalit-device', d); }
+  return d;
+})();
+let myVoteKeys = [];  // pilvitilassa tämän istunnon työntämät ääniavaimet
+
+let votesRef = null, metaRef = null;
+
+/* ---- Paikallistila: localStorage + BroadcastChannel ---- */
 const channel = ('BroadcastChannel' in window) ? new BroadcastChannel(CHANNEL_NAME) : null;
-let selfWrite = false;
 
-function load() {
+function loadLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -38,32 +56,79 @@ function load() {
       if (parsed && Array.isArray(parsed.candidates)) return parsed;
     }
   } catch (e) { /* ignore */ }
-  return DEFAULT_STATE();
+  return { title: DEFAULT_TITLE, candidates: DEFAULT_CANDIDATES(), log: [] };
 }
-
-function persist() {
-  selfWrite = true;
+function persistLocal() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   if (channel) channel.postMessage(state);
 }
+function notify() { render(); }
 
-/* Vastaanota muutokset muista ikkunoista */
-if (channel) {
-  channel.onmessage = (e) => {
-    if (e.data && Array.isArray(e.data.candidates)) {
-      state = e.data;
-      render();
-    }
-  };
+/* ---- Pilvitila: Firebase ---- */
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src; s.async = true;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Lataus epäonnistui: ' + src));
+    document.head.appendChild(s);
+  });
 }
-window.addEventListener('storage', (e) => {
-  if (e.key === STORAGE_KEY && e.newValue) {
-    try {
-      const parsed = JSON.parse(e.newValue);
-      if (parsed && Array.isArray(parsed.candidates)) { state = parsed; render(); }
-    } catch (_) {}
+
+function initCloud() {
+  const CDN = 'https://www.gstatic.com/firebasejs/10.12.5/';
+  return loadScript(CDN + 'firebase-app-compat.js')
+    .then(() => loadScript(CDN + 'firebase-database-compat.js'))
+    .then(() => {
+      firebase.initializeApp(FB);
+      const db = firebase.database();
+      metaRef = db.ref(DB_ROOT + '/meta');
+      votesRef = db.ref(DB_ROOT + '/votes');
+
+      // Siemennä ehdokkaat jos tietokanta on tyhjä
+      metaRef.once('value').then(snap => {
+        if (!snap.exists()) metaRef.set({ title: DEFAULT_TITLE, candidates: DEFAULT_CANDIDATES() });
+      }).catch(() => {});
+
+      metaRef.on('value', snap => {
+        const m = snap.val() || {};
+        state.title = m.title || DEFAULT_TITLE;
+        state.candidates = Array.isArray(m.candidates)
+          ? m.candidates.filter(Boolean).map(c => ({ photo: null, ...c }))
+          : [];
+        ready = true;
+        notify();
+      });
+      votesRef.on('value', snap => {
+        const v = snap.val() || {};
+        state.log = Object.keys(v)
+          .map(key => ({ key, id: v[key].candId, t: v[key].t || 0 }))
+          .sort((a, b) => a.t - b.t);
+        ready = true;
+        notify();
+      });
+      db.ref('.info/connected').on('value', s => { connected = !!s.val(); updateConn(); });
+    })
+    .catch(err => {
+      console.error('Firebase-yhteys epäonnistui:', err);
+      updateConn();
+    });
+}
+
+function updateConn() {
+  const el = document.getElementById('conn');
+  if (!el) return;
+  if (MODE === 'local') {
+    el.innerHTML = '<span class="cdot local"></span>Paikallinen';
+    el.title = 'Vain tämän koneen ikkunat synkkaavat keskenään';
+  } else if (connected) {
+    el.innerHTML = '<span class="cdot ok"></span>Pilvi yhdistetty';
+    el.title = 'Kaikki koneet synkkaavat reaaliajassa';
+  } else {
+    el.innerHTML = '<span class="cdot off"></span>Yhdistetään…';
+    el.title = 'Odotetaan pilviyhteyttä';
   }
-});
+}
 
 /* ---------------- Apurit ---------------- */
 function counts() {
@@ -72,7 +137,8 @@ function counts() {
   state.log.forEach(v => { if (c[v.id] != null) c[v.id]++; });
   return c;
 }
-function totalVotes() { return state.log.length; }
+function totalVotes() { const c = counts(); let t = 0; for (const k in c) t += c[k]; return t; }
+function canUndo() { return MODE === 'cloud' ? myVoteKeys.length > 0 : state.log.length > 0; }
 
 function initials(name) {
   const p = (name || '').trim().split(/\s+/).filter(Boolean);
@@ -120,18 +186,42 @@ function fileToSquareDataURL(file, size = 240, quality = 0.82) {
 
 /* ---------------- Toimet ---------------- */
 function addVote(id) {
-  state.log.push({ id, t: Date.now() });
-  persist();
+  if (MODE === 'cloud') {
+    const ref = votesRef.push();
+    myVoteKeys.push(ref.key);
+    ref.set({ candId: id, t: firebase.database.ServerValue.TIMESTAMP, by: DEVICE_ID });
+  } else {
+    state.log.push({ id, t: Date.now() });
+    persistLocal(); notify();
+  }
 }
 function undoLast() {
+  if (MODE === 'cloud') {
+    if (!myVoteKeys.length) return null;
+    const key = myVoteKeys.pop();
+    const entry = state.log.find(v => v.key === key);
+    votesRef.child(key).remove();
+    return entry ? { id: entry.id } : null;
+  }
   if (!state.log.length) return null;
   const removed = state.log.pop();
-  persist();
+  persistLocal(); notify();
   return removed;
 }
 function resetVotes() {
-  state.log = [];
-  persist();
+  if (MODE === 'cloud') { myVoteKeys = []; votesRef.remove(); }
+  else { state.log = []; persistLocal(); notify(); }
+}
+function saveMeta(title, candidates) {
+  if (MODE === 'cloud') {
+    metaRef.set({ title, candidates });
+  } else {
+    const ids = new Set(candidates.map(c => c.id));
+    state.title = title;
+    state.candidates = candidates;
+    state.log = state.log.filter(v => ids.has(v.id)); // pudota poistettujen ehdokkaiden äänet
+    persistLocal(); notify();
+  }
 }
 
 /* ---------------- Render-runko ---------------- */
@@ -149,6 +239,12 @@ function render() {
     b.classList.toggle('active', b.dataset.view === view));
   document.body.classList.toggle('fs', view === 'results' && location.hash.includes('fs'));
   app.classList.toggle('wide', view === 'results');
+  updateConn();
+
+  if (!ready) {
+    app.innerHTML = `<div class="empty-note"><h3>Yhdistetään pilveen…</h3>Haetaan ehdokkaita ja ääniä.</div>`;
+    return;
+  }
 
   if (view === 'count') renderCount();
   else if (view === 'results') renderResults();
@@ -203,7 +299,7 @@ function renderCount() {
     <div class="count-bar">
       <div class="counted-pill">Ääniä laskettu: <b>${totalVotes()}</b></div>
       <div class="count-actions">
-        <button class="btn btn-ghost" id="undoBtn" ${totalVotes() ? '' : 'disabled'}>↩︎ Kumoa viimeisin</button>
+        <button class="btn btn-ghost" id="undoBtn" ${canUndo() ? '' : 'disabled'}>↩︎ Kumoa viimeisin${MODE === 'cloud' ? ' (tällä koneella)' : ''}</button>
         <button class="btn btn-ghost" id="resetBtn" ${totalVotes() ? '' : 'disabled'}>Nollaa laskenta</button>
       </div>
     </div>
@@ -421,12 +517,7 @@ function renderSetup() {
       .map(c => ({ id: c.id, name: c.name.trim(), color: c.color, photo: c.photo || null }))
       .filter(c => c.name);
     if (!cleaned.length) { toast('Lisää vähintään yksi ehdokas', '#c8102e'); return; }
-    // Säilytä vain niiden äänet, jotka ovat yhä olemassa
-    const ids = new Set(cleaned.map(c => c.id));
-    state.title = title;
-    state.candidates = cleaned;
-    state.log = state.log.filter(v => ids.has(v.id));
-    persist();
+    saveMeta(title, cleaned);
     toast('Tallennettu', '#178a3f');
     location.hash = '#/count';
   });
@@ -483,5 +574,25 @@ function toast(msg, color) {
 }
 
 /* ---------------- Käynnistys ---------------- */
+if (MODE === 'cloud') {
+  initCloud();
+} else {
+  state = loadLocal();
+  // Vastaanota muutokset saman koneen muista ikkunoista
+  if (channel) {
+    channel.onmessage = (e) => {
+      if (e.data && Array.isArray(e.data.candidates)) { state = e.data; render(); }
+    };
+  }
+  window.addEventListener('storage', (e) => {
+    if (e.key === STORAGE_KEY && e.newValue) {
+      try {
+        const parsed = JSON.parse(e.newValue);
+        if (parsed && Array.isArray(parsed.candidates)) { state = parsed; render(); }
+      } catch (_) {}
+    }
+  });
+}
+
 window.addEventListener('hashchange', render);
 render();

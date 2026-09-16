@@ -13,7 +13,7 @@
       <span class="brand-mark">🗳️</span>
       <div class="brand-text">
         <strong id="brandTitle">Maitosten Opiston presidentinvaalit</strong>
-        <span class="brand-sub">Äänten laskenta</span>
+        <span class="brand-sub">Äänten laskenta · <span class="conn" id="conn"></span></span>
       </div>
     </div>
     <nav class="nav">
@@ -34,6 +34,8 @@
 
   <div class="toast" id="toast" hidden></div>
 
+  <!-- Firebase-asetukset (monen koneen synkka). Tyhjä = paikallistila. -->
+  <script src="firebase-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
