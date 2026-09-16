@@ -139,8 +139,9 @@ html, body {
 .avatar {
   width: 52px; height: 52px; border-radius: 50%;
   display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 18px;
-  background: var(--c, var(--blue)); flex-shrink: 0;
+  background: var(--c, var(--blue)); flex-shrink: 0; overflow: hidden;
 }
+.avatar img, .bar-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cand-meta { min-width: 0; }
 .cand-name { font-weight: 700; font-size: 17px; }
 .cand-votes { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
@@ -237,7 +238,7 @@ html, body {
 .bar-avatar {
   width: 46px; height: 46px; border-radius: 50%; margin: 0 auto 6px;
   display: grid; place-items: center; color: #fff; font-weight: 800; background: var(--c, var(--blue));
-  border: 3px solid #fff; box-shadow: 0 3px 8px rgba(0,0,0,.15);
+  border: 3px solid #fff; box-shadow: 0 3px 8px rgba(0,0,0,.15); overflow: hidden;
 }
 .bar-name { font-weight: 700; font-size: 15px; }
 .bar-crown { font-size: 16px; }
@@ -267,6 +268,18 @@ html, body {
 .cand-row input { flex: 1; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; font-family: inherit; }
 .cand-row .rm { background: #fff; border: 1px solid var(--line); color: var(--danger); border-radius: 9px; width: 40px; height: 40px; cursor: pointer; font-size: 18px; flex-shrink: 0; }
 .cand-row .rm:hover { background: #fdeef0; }
+.cand-row .photo-btn {
+  width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0; cursor: pointer; overflow: hidden;
+  display: grid; place-items: center; border: 1px solid var(--line); background: #f4f6fa;
+  font-size: 18px; position: relative;
+}
+.cand-row .photo-btn img { width: 100%; height: 100%; object-fit: cover; }
+.cand-row .photo-btn:hover { border-color: var(--blue-light); background: #eef2fa; }
+.cand-row .photo-rm {
+  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; cursor: pointer; margin-left: -6px;
+  border: 1px solid var(--line); background: #fff; color: var(--danger); font-size: 13px; line-height: 1;
+}
+.cand-row .photo-rm:hover { background: #fdeef0; }
 .setup-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .setup-actions .spacer { flex: 1; }
 

@@ -88,6 +88,36 @@ function esc(s) {
 function pct(n, total) { return total ? (n / total * 100) : 0; }
 function fmtPct(x) { return x.toFixed(1).replace('.', ',') + ' %'; }
 
+/* Avatar: kuva jos ehdokkaalla on sellainen, muuten nimikirjaimet */
+function avatarHTML(cand, cls) {
+  if (cand.photo) {
+    return `<span class="${cls}" style="--c:${cand.color}"><img src="${cand.photo}" alt=""></span>`;
+  }
+  return `<span class="${cls}" style="--c:${cand.color}">${esc(initials(cand.name))}</span>`;
+}
+
+/* Lue kuvatiedosto, rajaa keskeltä neliöksi ja pakkaa JPEGiksi -> data-URL.
+ * Pieni koko jotta mahtuu localStorageen ja synkkaviestiin. */
+function fileToSquareDataURL(file, size = 240, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const side = Math.min(img.width, img.height);
+      const sx = (img.width - side) / 2;
+      const sy = (img.height - side) / 2;
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Kuvan lataus epäonnistui')); };
+    img.src = url;
+  });
+}
+
 /* ---------------- Toimet ---------------- */
 function addVote(id) {
   state.log.push({ id, t: Date.now() });
@@ -180,7 +210,7 @@ function renderCount() {
     <div class="cand-grid">
       ${state.candidates.map(cand => `
         <button class="cand-card" style="--c:${cand.color}" data-id="${cand.id}">
-          <span class="avatar" style="--c:${cand.color}">${esc(initials(cand.name))}</span>
+          ${avatarHTML(cand, 'avatar')}
           <span class="cand-meta">
             <span class="cand-name">${esc(cand.name)}</span>
             <span class="cand-votes"><b>${c[cand.id]}</b> ääntä</span>
@@ -210,7 +240,7 @@ function confirmVote(cand) {
   openModal(`
     <div class="m-eyebrow">Vahvista ääni</div>
     <div class="m-cand">
-      <span class="avatar" style="--c:${cand.color}">${esc(initials(cand.name))}</span>
+      ${avatarHTML(cand, 'avatar')}
       <span class="n">${esc(cand.name)}</span>
     </div>
     <div class="m-q">Kirjataanko yksi ääni tälle ehdokkaalle?</div>
@@ -289,7 +319,7 @@ function renderResults() {
                 <div class="bar" style="--c:${cand.color}; height:${h}%"></div>
               </div>
               <div class="bar-foot">
-                <div class="bar-avatar" style="--c:${cand.color}">${esc(initials(cand.name))}</div>
+                ${avatarHTML(cand, 'bar-avatar')}
                 <div class="bar-name">${isLeader ? '<span class="bar-crown">👑</span> ' : ''}${esc(cand.name)}</div>
               </div>
             </div>
@@ -347,27 +377,40 @@ function renderSetup() {
     wrap.innerHTML = draft.map((c, i) => `
       <div class="cand-row" data-i="${i}">
         <span class="swatch" style="background:${c.color}" title="Vaihda väri"></span>
-        <input type="text" value="${esc(c.name)}" placeholder="Ehdokkaan nimi" />
-        <button class="rm" title="Poista">✕</button>
+        <label class="photo-btn" style="--c:${c.color}" title="${c.photo ? 'Vaihda kuva' : 'Lisää kuva'}">
+          ${c.photo ? `<img src="${c.photo}" alt="">` : '<span class="ph">📷</span>'}
+          <input type="file" accept="image/*" hidden />
+        </label>
+        ${c.photo ? '<button class="photo-rm" title="Poista kuva">✕</button>' : ''}
+        <input type="text" class="name-in" value="${esc(c.name)}" placeholder="Ehdokkaan nimi" />
+        <button class="rm" title="Poista ehdokas">✕</button>
       </div>
     `).join('') || '<div class="hint">Ei ehdokkaita. Lisää vähintään yksi.</div>';
 
     wrap.querySelectorAll('.cand-row').forEach(row => {
       const i = +row.dataset.i;
-      row.querySelector('input').addEventListener('input', e => draft[i].name = e.target.value);
+      row.querySelector('.name-in').addEventListener('input', e => draft[i].name = e.target.value);
       row.querySelector('.rm').addEventListener('click', () => { draft.splice(i, 1); drawRows(); });
       row.querySelector('.swatch').addEventListener('click', () => {
         const idx = PALETTE.indexOf(draft[i].color);
         draft[i].color = PALETTE[(idx + 1) % PALETTE.length];
         drawRows();
       });
+      row.querySelector('.photo-btn input[type=file]').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try { draft[i].photo = await fileToSquareDataURL(file); drawRows(); }
+        catch (err) { toast('Kuvan käsittely epäonnistui', '#c8102e'); }
+      });
+      const rmPhoto = row.querySelector('.photo-rm');
+      if (rmPhoto) rmPhoto.addEventListener('click', () => { draft[i].photo = null; drawRows(); });
     });
   }
   drawRows();
 
   app.querySelector('#addBtn').addEventListener('click', () => {
     draft.push({ id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-                 name: '', color: PALETTE[draft.length % PALETTE.length] });
+                 name: '', color: PALETTE[draft.length % PALETTE.length], photo: null });
     drawRows();
   });
   app.querySelector('#clearBtn').addEventListener('click', () => { draft = []; drawRows(); });
@@ -375,7 +418,7 @@ function renderSetup() {
   app.querySelector('#saveBtn').addEventListener('click', () => {
     const title = app.querySelector('#titleInput').value.trim() || 'Presidentinvaalit';
     const cleaned = draft
-      .map(c => ({ id: c.id, name: c.name.trim(), color: c.color }))
+      .map(c => ({ id: c.id, name: c.name.trim(), color: c.color, photo: c.photo || null }))
       .filter(c => c.name);
     if (!cleaned.length) { toast('Lisää vähintään yksi ehdokas', '#c8102e'); return; }
     // Säilytä vain niiden äänet, jotka ovat yhä olemassa
