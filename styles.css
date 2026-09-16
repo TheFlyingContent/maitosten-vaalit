@@ -16,6 +16,9 @@
 
 * { box-sizing: border-box; }
 
+/* hidden-attribuutti voittaa aina display-säännöt (esim. .modal-overlay: display:grid) */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
