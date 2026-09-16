@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Maitosten Opiston presidentinvaalit</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar" id="topbar">
+    <div class="brand">
+      <span class="brand-mark">🗳️</span>
+      <div class="brand-text">
+        <strong id="brandTitle">Maitosten Opiston presidentinvaalit</strong>
+        <span class="brand-sub">Äänten laskenta</span>
+      </div>
+    </div>
+    <nav class="nav">
+      <a href="#/count" data-view="count" class="nav-btn">Ääntenlasku</a>
+      <a href="#/results" data-view="results" class="nav-btn">Tulokset</a>
+      <a href="#/setup" data-view="setup" class="nav-btn nav-btn--ghost">Asetukset</a>
+    </nav>
+  </header>
+
+  <main id="app" class="app"></main>
+
+  <!-- Vahvistusdialogi -->
+  <div class="modal-overlay" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
