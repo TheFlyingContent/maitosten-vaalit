@@ -168,24 +168,84 @@ function avatarHTML(cand, cls) {
   return `<span class="${cls}" style="--c:${cand.color}">${esc(initials(cand.name))}</span>`;
 }
 
-/* Lue kuvatiedosto, rajaa keskeltä neliöksi ja pakkaa JPEGiksi -> data-URL.
- * Pieni koko jotta mahtuu localStorageen ja synkkaviestiin. */
-function fileToSquareDataURL(file, size = 240, quality = 0.82) {
-  return new Promise((resolve, reject) => {
+/* Rajausikkuna: käyttäjä raahaa ja zoomaa kuvaa 3:4-suorakulmioon.
+ * Palauttaa rajatun kuvan JPEG data-URLina (tai null jos peruttiin). */
+const CROP_ASPECT = 3 / 4;   // pystysuorakulmio (leveys / korkeus)
+function openCropper(file) {
+  return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
     img.onload = () => {
-      URL.revokeObjectURL(url);
-      const side = Math.min(img.width, img.height);
-      const sx = (img.width - side) / 2;
-      const sy = (img.height - side) / 2;
-      const canvas = document.createElement('canvas');
-      canvas.width = canvas.height = size;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
-      resolve(canvas.toDataURL('image/jpeg', quality));
+      const FW = 276, FH = Math.round(FW / CROP_ASPECT);   // rajauskehys näytöllä
+      const OUTW = 300, OUTH = Math.round(OUTW / CROP_ASPECT);
+      const nW = img.naturalWidth, nH = img.naturalHeight;
+      const baseScale = Math.max(FW / nW, FH / nH);         // "cover"
+
+      const ov = document.createElement('div');
+      ov.className = 'crop-overlay';
+      ov.innerHTML = `
+        <div class="crop-box">
+          <div class="crop-title">Rajaa kuva</div>
+          <div class="crop-hint">Raahaa kuvaa ja säädä kokoa liukusäätimellä.</div>
+          <div class="crop-frame" style="width:${FW}px;height:${FH}px">
+            <img class="crop-img" alt="" draggable="false">
+          </div>
+          <input type="range" class="crop-zoom" min="1" max="3" step="0.01" value="1">
+          <div class="crop-actions">
+            <button class="btn btn-ghost" data-c="cancel">Peruuta</button>
+            <button class="btn btn-primary" data-c="ok">Käytä kuvaa</button>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      const frame = ov.querySelector('.crop-frame');
+      const im = ov.querySelector('.crop-img');
+      const zoom = ov.querySelector('.crop-zoom');
+      im.src = url;
+
+      let scale = baseScale, tx = 0, ty = 0;
+      const dims = () => ({ dW: nW * scale, dH: nH * scale });
+      function clamp() {
+        const { dW, dH } = dims();
+        tx = Math.min(0, Math.max(FW - dW, tx));
+        ty = Math.min(0, Math.max(FH - dH, ty));
+      }
+      function apply() {
+        const { dW, dH } = dims();
+        im.style.width = dW + 'px'; im.style.height = dH + 'px';
+        im.style.left = tx + 'px'; im.style.top = ty + 'px';
+      }
+      (() => { const { dW, dH } = dims(); tx = (FW - dW) / 2; ty = (FH - dH) / 2; apply(); })();
+
+      let dragging = false, px = 0, py = 0;
+      frame.addEventListener('pointerdown', e => { dragging = true; px = e.clientX; py = e.clientY; frame.setPointerCapture(e.pointerId); });
+      frame.addEventListener('pointermove', e => {
+        if (!dragging) return;
+        tx += e.clientX - px; ty += e.clientY - py; px = e.clientX; py = e.clientY; clamp(); apply();
+      });
+      const endDrag = () => { dragging = false; };
+      frame.addEventListener('pointerup', endDrag);
+      frame.addEventListener('pointercancel', endDrag);
+
+      zoom.addEventListener('input', () => {
+        const newScale = baseScale * parseFloat(zoom.value);
+        const cx = FW / 2, cy = FH / 2;
+        const ipx = (cx - tx) / scale, ipy = (cy - ty) / scale;   // pidä keskikohta paikallaan
+        scale = newScale;
+        tx = cx - ipx * scale; ty = cy - ipy * scale;
+        clamp(); apply();
+      });
+
+      function close(result) { URL.revokeObjectURL(url); ov.remove(); resolve(result); }
+      ov.querySelector('[data-c="cancel"]').addEventListener('click', () => close(null));
+      ov.addEventListener('click', e => { if (e.target === ov) close(null); });
+      ov.querySelector('[data-c="ok"]').addEventListener('click', () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = OUTW; canvas.height = OUTH;
+        canvas.getContext('2d').drawImage(img, -tx / scale, -ty / scale, FW / scale, FH / scale, 0, 0, OUTW, OUTH);
+        close(canvas.toDataURL('image/jpeg', 0.85));
+      });
     };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Kuvan lataus epäonnistui')); };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
   });
 }
@@ -265,16 +325,15 @@ function renderHome() {
   app.innerHTML = `
     <div class="page-head">
       <h1>${esc(state.title)}</h1>
-      <p>Valitse toiminto. Yksi laskija kirjaa äänet, iso näyttö näyttää tulokset reaaliajassa.</p>
     </div>
     <div class="home-grid">
       <a class="home-card" href="#/count">
         <h2>Ääntenlasku</h2>
-        <p>Klikkaa ehdokasta, vahvista ääni erikseen ja kirjaa se. Vahinkoäänet estetään vahvistuksella ja voit kumota viimeisimmän.</p>
+        <p>Kirjaa äänet ehdokkaille.</p>
       </a>
       <a class="home-card" href="#/results">
-        <h2>Äänten katsominen</h2>
-        <p>Pylväsdiagrammi kaikkien ehdokkaiden äänistä — kuten oikeissa presidentinvaaleissa. Avaa tämä isolle näytölle.</p>
+        <h2>Tulokset</h2>
+        <p>Pylväät isolle näytölle.</p>
       </a>
     </div>
     <div class="home-stat">
@@ -406,7 +465,6 @@ function buildResults(ordered, isFs) {
     <div class="results-head">
       <div>
         <h1>${esc(state.title)}</h1>
-        <div class="sub">Ennakoimaton tulos · äänet päivittyvät reaaliajassa</div>
       </div>
       <div style="display:flex; align-items:flex-end; gap:22px;">
         <div class="results-total">
@@ -574,9 +632,10 @@ function renderSetup() {
       });
       row.querySelector('.photo-btn input[type=file]').addEventListener('change', async (e) => {
         const file = e.target.files[0];
+        e.target.value = '';                       // salli saman tiedoston valinta uudelleen
         if (!file) return;
-        try { draft[i].photo = await fileToSquareDataURL(file); drawRows(); }
-        catch (err) { toast('Kuvan käsittely epäonnistui', '#c8102e'); }
+        const dataURL = await openCropper(file);   // avaa rajaustyökalu
+        if (dataURL) { draft[i].photo = dataURL; drawRows(); }
       });
       const rmPhoto = row.querySelector('.photo-rm');
       if (rmPhoto) rmPhoto.addEventListener('click', () => { draft[i].photo = null; drawRows(); });
