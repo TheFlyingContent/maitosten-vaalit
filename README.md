@@ -1,4 +1,4 @@
-# Maitosten Opiston presidentinvaalit — äänten laskenta
+# Maitoisten Opiston presidentinvaalit — äänten laskenta
 
 Yksinkertainen, backendittömän staattinen nettisivu presidentinvaalien äänten laskentaan
 ja tulosten näyttämiseen isolla näytöllä. Tyyli mukailee Suomen presidentinvaalien

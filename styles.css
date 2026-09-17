@@ -110,7 +110,9 @@ html, body {
   padding: 10px 20px; font-weight: 700; box-shadow: var(--shadow);
 }
 .counted-pill b { color: var(--blue); font-size: 20px; }
-.count-actions { display: flex; gap: 10px; }
+.counted-pill--mine b { color: var(--good); }
+.count-pills { display: flex; gap: 10px; flex-wrap: wrap; }
+.count-actions { display: flex; gap: 10px; flex-wrap: wrap; }
 
 .cand-grid {
   display: grid;
@@ -297,9 +299,15 @@ html, body {
 
 .hint { color: var(--muted); font-size: 13.5px; margin-top: 10px; line-height: 1.5; }
 
-/* ---------- Fullscreen results ---------- */
+/* ---------- Fullscreen (tulokset ja laskenta) ---------- */
 body.fs .topbar { display: none; }
+body.fs .page-head { display: none; }
 body.fs .app.wide { padding: 22px 30px; }
+/* Laskenta kokonäytössä: isommat kortit */
+body.fs .cand-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+body.fs .cand-card { padding: 22px; }
+body.fs .cand-card .avatar { width: 64px; height: 64px; font-size: 22px; }
+body.fs .cand-name { font-size: 20px; }
 body.fs .chart { padding: 22px 26px; }
 body.fs .bars { height: calc(100vh - 92px); }
 body.fs #resEmpty { display: none !important; }

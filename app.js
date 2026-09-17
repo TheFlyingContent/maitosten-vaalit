@@ -1,4 +1,4 @@
-/* Maitosten Opiston presidentinvaalit — äänten laskenta
+/* Maitoisten Opiston presidentinvaalit — äänten laskenta
  * Kaksi toimintatilaa:
  *  - PILVI  (Firebase Realtime Database): sama tila jaetaan kaikille koneille, joten
  *           useampi laskijakone + iso näyttö näkevät saman äänimäärän reaaliajassa.
@@ -19,7 +19,7 @@ const PALETTE = [
   '#0091ad', '#b5179e', '#2d6a4f', '#7048e8', '#d1495b',
 ];
 
-const DEFAULT_TITLE = 'Maitosten Opiston presidentinvaalit';
+const DEFAULT_TITLE = 'Maitoisten Opiston presidentinvaalit';
 const DEFAULT_CANDIDATES = () => ([
   { id: 'c1', name: 'Alexander Virtanen', color: PALETTE[0], photo: null },
   { id: 'c2', name: 'Sanna Korhonen',     color: PALETTE[1], photo: null },
@@ -102,7 +102,7 @@ function initCloud() {
       votesRef.on('value', snap => {
         const v = snap.val() || {};
         state.log = Object.keys(v)
-          .map(key => ({ key, id: v[key].candId, t: v[key].t || 0 }))
+          .map(key => ({ key, id: v[key].candId, t: v[key].t || 0, by: v[key].by }))
           .sort((a, b) => a.t - b.t);
         ready = true;
         notify();
@@ -139,6 +139,12 @@ function counts() {
 }
 function totalVotes() { const c = counts(); let t = 0; for (const k in c) t += c[k]; return t; }
 function canUndo() { return MODE === 'cloud' ? myVoteKeys.length > 0 : state.log.length > 0; }
+// Tältä koneelta kirjatut äänet: pilvessä DEVICE_ID:llä merkityt, paikallistilassa kaikki
+function myCount() {
+  if (MODE !== 'cloud') return totalVotes();
+  const ids = new Set(state.candidates.map(x => x.id));
+  return state.log.reduce((n, v) => n + (v.by === DEVICE_ID && ids.has(v.id) ? 1 : 0), 0);
+}
 
 function initials(name) {
   const p = (name || '').trim().split(/\s+/).filter(Boolean);
@@ -237,8 +243,9 @@ function render() {
   document.getElementById('brandTitle').textContent = state.title;
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
-  document.body.classList.toggle('fs', view === 'results' && location.hash.includes('fs'));
-  app.classList.toggle('wide', view === 'results');
+  const fs = location.hash.includes('fs') && (view === 'results' || view === 'count');
+  document.body.classList.toggle('fs', fs);
+  app.classList.toggle('wide', view === 'results' || (view === 'count' && fs));
   updateConn();
   if (view !== 'results') resultsSig = null;   // rakenna tulokset uudelleen kun palataan näkymään
 
@@ -296,10 +303,14 @@ function renderCount() {
       <p>Klikkaa ehdokasta jolle ääni kuuluu. Ohjelma pyytää vahvistuksen ennen kirjausta.</p>
     </div>
     <div class="count-bar">
-      <div class="counted-pill">Ääniä laskettu: <b>${totalVotes()}</b></div>
+      <div class="count-pills">
+        <div class="counted-pill">Ääniä laskettu: <b>${totalVotes()}</b></div>
+        <div class="counted-pill counted-pill--mine">Tältä koneelta: <b>${myCount()}</b></div>
+      </div>
       <div class="count-actions">
-        <button class="btn btn-ghost" id="undoBtn" ${canUndo() ? '' : 'disabled'}>Kumoa viimeisin${MODE === 'cloud' ? ' (tällä koneella)' : ''}</button>
+        <button class="btn btn-ghost" id="undoBtn" ${canUndo() ? '' : 'disabled'}>Kumoa viimeisin${MODE === 'cloud' ? ' (tältä koneelta)' : ''}</button>
         <button class="btn btn-ghost" id="resetBtn" ${totalVotes() ? '' : 'disabled'}>Nollaa laskenta</button>
+        <button class="btn btn-ghost" id="fsBtnCount">${location.hash.includes('fs') ? 'Poistu koko näytöstä' : 'Koko näyttö'}</button>
       </div>
     </div>
     <div class="cand-grid">
@@ -329,6 +340,8 @@ function renderCount() {
     }
   });
   app.querySelector('#resetBtn').addEventListener('click', confirmReset);
+  app.querySelector('#fsBtnCount').addEventListener('click', () =>
+    location.hash.includes('fs') ? exitFullscreen() : enterFullscreen());
 }
 
 function confirmVote(cand) {
@@ -493,13 +506,14 @@ function reorderBars(rankedIds) {
 }
 
 function enterFullscreen() {
-  location.hash = '#/results?fs';
+  location.hash = '#/' + currentView() + '?fs';   // toimii sekä laskennassa että tuloksissa
   const el = document.documentElement;
   if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
 }
 function exitFullscreen() {
+  const base = currentView();
   if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
-  location.hash = '#/results';
+  location.hash = '#/' + base;
 }
 
 /* ---------------- Asetukset ---------------- */
@@ -662,7 +676,7 @@ if (MODE === 'cloud') {
 
 // Esc poistuu selaimen kokonäytöstä -> synkkaa myös hash takaisin normaaliin
 document.addEventListener('fullscreenchange', () => {
-  if (!document.fullscreenElement && location.hash.includes('fs')) location.hash = '#/results';
+  if (!document.fullscreenElement && location.hash.includes('fs')) location.hash = '#/' + currentView();
 });
 
 window.addEventListener('hashchange', render);
