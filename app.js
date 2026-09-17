@@ -12,7 +12,7 @@ const CHANNEL_NAME = 'maitosten-vaalit';
 const DB_ROOT = 'elections/maitoset';           // jaettu polku pilvitilassa
 
 const FB = window.FIREBASE_CONFIG || null;
-const MODE = (FB && FB.databaseURL) ? 'cloud' : 'local';
+let MODE = (FB && FB.databaseURL) ? 'cloud' : 'local';   // voi pudota 'local':iin jos pilviyhteys ei toimi
 
 const PALETTE = [
   '#003580', '#c8102e', '#178a3f', '#e07b00', '#5b2d8e',
@@ -29,11 +29,25 @@ const DEFAULT_CANDIDATES = () => ([
   { id: 'c6', name: 'Riikka Laine',       color: PALETTE[5], photo: null },
 ]);
 
+/* Sanitointi: kaikki ehdokasdata (myös pilvestä/toisesta ikkunasta tuleva) puhdistetaan
+ * ennen renderöintiä -> estää XSS-injektion väri-/kuvakenttien kautta ja rajoittaa koon. */
+const HEX = /^#[0-9A-Fa-f]{3,8}$/;
+function sanitizeCandidates(arr) {
+  return (Array.isArray(arr) ? arr : []).filter(Boolean).map(c => ({
+    id: String((c && c.id) || '').slice(0, 40),
+    name: String((c && c.name) || '').slice(0, 60),
+    color: (c && typeof c.color === 'string' && HEX.test(c.color)) ? c.color : PALETTE[0],
+    photo: (c && typeof c.photo === 'string' && c.photo.startsWith('data:image/') && c.photo.length < 300000) ? c.photo : null,
+  }));
+}
+function sanitizeTitle(t) { return String(t || DEFAULT_TITLE).slice(0, 100); }
+
 /* Yhtenäinen muistinvarainen tila, jonka näkymät lukevat.
  *   log: [{id, t, key?}]  (key on olemassa vain pilvitilassa kumoamista varten) */
 let state = { title: DEFAULT_TITLE, candidates: [], log: [] };
 let ready = (MODE === 'local');   // pilvitilassa true kun ensimmäinen data on saapunut
 let connected = false;
+let everConnected = false;        // onko pilviyhteys joskus muodostunut (erottaa "ei koskaan" vs "katkesi")
 
 /* Konekohtainen tunniste: pilvitilassa "kumoa viimeisin" poistaa vain tämän koneen äänet */
 const DEVICE_ID = (() => {
@@ -41,7 +55,10 @@ const DEVICE_ID = (() => {
   if (!d) { d = Math.random().toString(36).slice(2); localStorage.setItem('vaalit-device', d); }
   return d;
 })();
-let myVoteKeys = [];  // pilvitilassa tämän istunnon työntämät ääniavaimet
+let cloudError = false;          // pilviyhteys epäonnistui -> näytä virheruutu + varareitti
+let cloudTimeout = null;
+const pendingUndo = new Set();   // ääniavaimet joita ollaan poistamassa (nopea tuplakumous)
+let localListenersAttached = false;
 
 let votesRef = null, metaRef = null;
 
@@ -53,16 +70,52 @@ function loadLocal() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.candidates)) return parsed;
+      if (parsed && Array.isArray(parsed.candidates)) {
+        return { title: sanitizeTitle(parsed.title), candidates: sanitizeCandidates(parsed.candidates),
+                 log: Array.isArray(parsed.log) ? parsed.log : [] };
+      }
     }
   } catch (e) { /* ignore */ }
   return { title: DEFAULT_TITLE, candidates: DEFAULT_CANDIDATES(), log: [] };
 }
 function persistLocal() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (e) {
+    toast('Muisti täynnä — tallennus epäonnistui', '#c8102e');   // esim. QuotaExceededError
+  }
   if (channel) channel.postMessage(state);
 }
 function notify() { render(); }
+
+/* Vastaanota saman koneen muut ikkunat (paikallistila). Kutsutaan kerran. */
+function attachLocalListeners() {
+  if (localListenersAttached) return;
+  localListenersAttached = true;
+  const adopt = (obj) => {
+    state = { title: sanitizeTitle(obj.title), candidates: sanitizeCandidates(obj.candidates),
+              log: Array.isArray(obj.log) ? obj.log : [] };
+    render();
+  };
+  if (channel) channel.onmessage = (e) => { if (e.data && Array.isArray(e.data.candidates)) adopt(e.data); };
+  window.addEventListener('storage', (e) => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return;
+    try { const p = JSON.parse(e.newValue); if (p && Array.isArray(p.candidates)) adopt(p); } catch (_) {}
+  });
+}
+
+/* Pudota paikallistilaan jos pilviyhteys ei toimi (operaattorin valinta virheruudusta). */
+function fallBackToLocal() {
+  MODE = 'local';
+  cloudError = false;
+  clearTimeout(cloudTimeout);
+  setNetWarn(false);
+  state = loadLocal();
+  ready = true;
+  attachLocalListeners();
+  toast('Jatketaan paikallisesti', '#e07b00');
+  render();
+}
 
 /* ---- Pilvitila: Firebase ---- */
 function loadScript(src) {
@@ -75,8 +128,30 @@ function loadScript(src) {
   });
 }
 
+function cloudReady() { ready = true; notify(); }   // yhteyden/virheen tilaa hoitaa .info/connected + timeout
+
+/* Ei-estävä varoituspalkki: appi toimii mutta pilviyhteyttä ei ole (äänet jonossa). */
+function setNetWarn(show) {
+  let el = document.getElementById('netbanner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'netbanner'; el.className = 'netbanner';
+    el.textContent = 'Ei pilviyhteyttä — äänet tallentuvat kun yhteys palaa. Tarkista verkko.';
+    const bar = document.getElementById('topbar');
+    if (bar && bar.parentNode) bar.parentNode.insertBefore(el, bar.nextSibling);
+    else document.body.insertBefore(el, document.body.firstChild);
+  }
+  el.hidden = !show;
+}
+
 function initCloud() {
   const CDN = 'https://www.gstatic.com/firebasejs/10.12.5/';
+  // 9 s kuluttua: jos mitään ei latautunut -> estävä virheruutu; jos toimii muttei yhteyttä -> varoituspalkki
+  cloudTimeout = setTimeout(() => {
+    if (cloudError) return;
+    if (!ready) { cloudError = true; ready = true; render(); }
+    else if (!connected) setNetWarn(true);
+  }, 9000);
   return loadScript(CDN + 'firebase-app-compat.js')
     .then(() => loadScript(CDN + 'firebase-database-compat.js'))
     .then(() => {
@@ -85,33 +160,36 @@ function initCloud() {
       metaRef = db.ref(DB_ROOT + '/meta');
       votesRef = db.ref(DB_ROOT + '/votes');
 
-      // Siemennä ehdokkaat jos tietokanta on tyhjä
-      metaRef.once('value').then(snap => {
-        if (!snap.exists()) metaRef.set({ title: DEFAULT_TITLE, candidates: DEFAULT_CANDIDATES() });
-      }).catch(() => {});
+      // Siemennä ehdokkaat ATOMISESTI jos tietokanta on tyhjä (ei kilpailua kahden koneen välillä)
+      metaRef.transaction(cur => (cur === null ? { title: DEFAULT_TITLE, candidates: DEFAULT_CANDIDATES() } : undefined))
+        .catch(() => {});
 
       metaRef.on('value', snap => {
+        if (MODE !== 'cloud') return;                 // ohita jos on pudottu paikallistilaan
         const m = snap.val() || {};
-        state.title = m.title || DEFAULT_TITLE;
-        state.candidates = Array.isArray(m.candidates)
-          ? m.candidates.filter(Boolean).map(c => ({ photo: null, ...c }))
-          : [];
-        ready = true;
-        notify();
+        state.title = sanitizeTitle(m.title);
+        state.candidates = sanitizeCandidates(m.candidates);
+        cloudReady();
       });
       votesRef.on('value', snap => {
+        if (MODE !== 'cloud') return;
         const v = snap.val() || {};
         state.log = Object.keys(v)
           .map(key => ({ key, id: v[key].candId, t: v[key].t || 0, by: v[key].by }))
           .sort((a, b) => a.t - b.t);
-        ready = true;
-        notify();
+        pendingUndo.forEach(k => { if (!v[k]) pendingUndo.delete(k); });   // siivoa jo poistetut
+        cloudReady();
       });
-      db.ref('.info/connected').on('value', s => { connected = !!s.val(); updateConn(); });
+      db.ref('.info/connected').on('value', s => {
+        connected = !!s.val();
+        if (connected) { everConnected = true; clearTimeout(cloudTimeout); cloudError = false; setNetWarn(false); render(); }
+        else if (everConnected) setNetWarn(true);   // yhteys katkesi kesken -> varoita
+        updateConn();
+      });
     })
     .catch(err => {
-      console.error('Firebase-yhteys epäonnistui:', err);
-      updateConn();
+      console.error('Firebase-yhteys epäonnistui:', err);   // SDK ei latautunut (esim. gstatic estetty)
+      cloudError = true; ready = true; render();
     });
 }
 
@@ -138,7 +216,9 @@ function counts() {
   return c;
 }
 function totalVotes() { const c = counts(); let t = 0; for (const k in c) t += c[k]; return t; }
-function canUndo() { return MODE === 'cloud' ? myVoteKeys.length > 0 : state.log.length > 0; }
+// Kumottavat = tämän koneen äänet lokista (kestää sivun latauksen, toisin kuin istuntopino)
+function myUndoable() { return state.log.filter(v => v.by === DEVICE_ID && !pendingUndo.has(v.key)); }
+function canUndo() { return MODE === 'cloud' ? myUndoable().length > 0 : state.log.length > 0; }
 // Tältä koneelta kirjatut äänet: pilvessä DEVICE_ID:llä merkityt, paikallistilassa kaikki
 function myCount() {
   if (MODE !== 'cloud') return totalVotes();
@@ -160,12 +240,15 @@ function esc(s) {
 function pct(n, total) { return total ? (n / total * 100) : 0; }
 function fmtPct(x) { return x.toFixed(1).replace('.', ',') + ' %'; }
 
-/* Avatar: kuva jos ehdokkaalla on sellainen, muuten nimikirjaimet */
+/* Avatar: kuva jos ehdokkaalla on sellainen, muuten nimikirjaimet.
+ * Väri ja kuva validoidaan tässäkin (defense-in-depth XSS:ää vastaan). */
 function avatarHTML(cand, cls) {
-  if (cand.photo) {
-    return `<span class="${cls}" style="--c:${cand.color}"><img src="${cand.photo}" alt=""></span>`;
+  const color = HEX.test(cand.color || '') ? cand.color : PALETTE[0];
+  const photo = (typeof cand.photo === 'string' && cand.photo.startsWith('data:image/')) ? cand.photo : null;
+  if (photo) {
+    return `<span class="${cls}" style="--c:${color}"><img src="${esc(photo)}" alt=""></span>`;
   }
-  return `<span class="${cls}" style="--c:${cand.color}">${esc(initials(cand.name))}</span>`;
+  return `<span class="${cls}" style="--c:${color}">${esc(initials(cand.name))}</span>`;
 }
 
 /* Rajausikkuna: käyttäjä raahaa ja zoomaa kuvaa 3:4-suorakulmioon.
@@ -251,11 +334,12 @@ function openCropper(file) {
 }
 
 /* ---------------- Toimet ---------------- */
+const writeError = () => toast('Tallennus epäonnistui — tarkista yhteys', '#c8102e');
+
 function addVote(id) {
   if (MODE === 'cloud') {
-    const ref = votesRef.push();
-    myVoteKeys.push(ref.key);
-    ref.set({ candId: id, t: firebase.database.ServerValue.TIMESTAMP, by: DEVICE_ID });
+    votesRef.push({ candId: id, t: firebase.database.ServerValue.TIMESTAMP, by: DEVICE_ID })
+      .catch(writeError);
   } else {
     state.log.push({ id, t: Date.now() });
     persistLocal(); notify();
@@ -263,11 +347,13 @@ function addVote(id) {
 }
 function undoLast() {
   if (MODE === 'cloud') {
-    if (!myVoteKeys.length) return null;
-    const key = myVoteKeys.pop();
-    const entry = state.log.find(v => v.key === key);
-    votesRef.child(key).remove();
-    return entry ? { id: entry.id } : null;
+    const mine = myUndoable();
+    if (!mine.length) return null;
+    const last = mine[mine.length - 1];         // viimeisin oma ääni ajan mukaan
+    pendingUndo.add(last.key);
+    votesRef.child(last.key).remove()
+      .catch(() => { pendingUndo.delete(last.key); toast('Kumous epäonnistui — tarkista yhteys', '#c8102e'); });
+    return { id: last.id };
   }
   if (!state.log.length) return null;
   const removed = state.log.pop();
@@ -275,17 +361,16 @@ function undoLast() {
   return removed;
 }
 function resetVotes() {
-  if (MODE === 'cloud') { myVoteKeys = []; votesRef.remove(); }
+  if (MODE === 'cloud') { pendingUndo.clear(); votesRef.remove().catch(writeError); }
   else { state.log = []; persistLocal(); notify(); }
 }
 function saveMeta(title, candidates) {
   if (MODE === 'cloud') {
-    metaRef.set({ title, candidates });
+    metaRef.set({ title, candidates }).catch(writeError);
   } else {
-    const ids = new Set(candidates.map(c => c.id));
+    // Säilytä orpoäänet kuten pilvitilassakin (counts() jättää ne huomiotta) -> yhtenäinen käytös
     state.title = title;
     state.candidates = candidates;
-    state.log = state.log.filter(v => ids.has(v.id)); // pudota poistettujen ehdokkaiden äänet
     persistLocal(); notify();
   }
 }
@@ -297,18 +382,40 @@ function currentView() {
   const h = location.hash.replace(/^#\//, '').split('?')[0];   // katkaise esim. "results?fs" -> "results"
   return ['count', 'results', 'setup'].includes(h) ? h : 'home';
 }
+function isFsHash() { return (location.hash.split('?')[1] || '') === 'fs'; }   // täsmällinen, ei löysä includes
+
+/* Fullscreen-apurit (webkit-fallback Safaria varten) */
+function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
+function requestFs(el) { const fn = el.requestFullscreen || el.webkitRequestFullscreen; if (fn) { try { fn.call(el); } catch (_) {} } }
+function exitNativeFs() { const fn = document.exitFullscreen || document.webkitExitFullscreen; if (fn) { try { fn.call(document); } catch (_) {} } }
 
 function render() {
   const view = currentView();
   document.getElementById('brandTitle').textContent = state.title;
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
-  const fs = location.hash.includes('fs') && (view === 'results' || view === 'count');
+  const fs = isFsHash() && (view === 'results' || view === 'count');
   document.body.classList.toggle('fs', fs);
   app.classList.toggle('wide', view === 'results' || (view === 'count' && fs));
+  if (!fs && fsElement()) exitNativeFs();       // varmista natiivi-kokonäytön sulku kun poistutaan
   updateConn();
   if (view !== 'results') resultsSig = null;   // rakenna tulokset uudelleen kun palataan näkymään
 
+  if (cloudError) {
+    app.innerHTML = `
+      <div class="empty-note">
+        <h3>Pilviyhteys ei toimi</h3>
+        <p>Tarkista verkkoyhteys. Voit yrittää uudelleen, tai jatkaa vain tällä koneella
+           (äänet eivät tällöin synkkaudu muille koneille).</p>
+        <div class="err-actions">
+          <button class="btn btn-primary" id="retryBtn">Yritä uudelleen</button>
+          <button class="btn btn-ghost" id="localBtn">Jatka paikallisesti</button>
+        </div>
+      </div>`;
+    app.querySelector('#retryBtn').addEventListener('click', () => location.reload());
+    app.querySelector('#localBtn').addEventListener('click', fallBackToLocal);
+    return;
+  }
   if (!ready) {
     app.innerHTML = `<div class="empty-note"><h3>Yhdistetään pilveen…</h3>Haetaan ehdokkaita ja ääniä.</div>`;
     return;
@@ -367,7 +474,7 @@ function renderCount() {
       </div>
       <div class="count-actions">
         <button class="btn btn-ghost" id="undoBtn" ${canUndo() ? '' : 'disabled'}>Kumoa viimeisin${MODE === 'cloud' ? ' (tältä koneelta)' : ''}</button>
-        <button class="btn btn-ghost" id="fsBtnCount">${location.hash.includes('fs') ? 'Poistu koko näytöstä' : 'Koko näyttö'}</button>
+        <button class="btn btn-ghost" id="fsBtnCount">${isFsHash() ? 'Poistu koko näytöstä' : 'Koko näyttö'}</button>
       </div>
     </div>
     <div class="cand-grid">
@@ -396,7 +503,7 @@ function renderCount() {
     }
   });
   app.querySelector('#fsBtnCount').addEventListener('click', () =>
-    location.hash.includes('fs') ? exitFullscreen() : enterFullscreen());
+    isFsHash() ? exitFullscreen() : enterFullscreen());
 }
 
 function confirmVote(cand) {
@@ -468,7 +575,7 @@ function buildResults(ordered, isFs) {
     ${isFs ? `
     <div class="fs-bar">
       <div class="fs-total"><b id="resTotalFs">0</b> ääntä laskettu</div>
-      <button id="fsExit" class="fs-exit" title="Poistu kokonäytöstä (Esc)">✕</button>
+      <button id="fsExit" class="fs-exit" title="Poistu kokonäytöstä (Esc)" aria-label="Poistu kokonäytöstä">✕</button>
     </div>
     ` : `
     <div class="results-head">
@@ -510,7 +617,7 @@ function buildResults(ordered, isFs) {
 function renderResults() {
   const c = counts();
   const total = totalVotes();
-  const isFs = location.hash.includes('fs');
+  const isFs = isFsHash();
   const list = state.candidates;
   const ranked = [...list].sort((a, b) => c[b.id] - c[a.id]);   // eniten ääniä vasemmalle
   const maxCount = Math.max(0, ...list.map(x => c[x.id]));
@@ -574,12 +681,11 @@ function reorderBars(rankedIds) {
 
 function enterFullscreen() {
   location.hash = '#/' + currentView() + '?fs';   // toimii sekä laskennassa että tuloksissa
-  const el = document.documentElement;
-  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  requestFs(document.documentElement);            // ?fs-tila riittää vaikka natiivi-API ei tukisi (iPad-Safari)
 }
 function exitFullscreen() {
   const base = currentView();
-  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  if (fsElement()) exitNativeFs();
   location.hash = '#/' + base;
 }
 
@@ -629,9 +735,9 @@ function renderSetup() {
           ${c.photo ? `<img src="${c.photo}" alt="">` : '<span class="ph">Kuva</span>'}
           <input type="file" accept="image/*" hidden />
         </label>
-        ${c.photo ? '<button class="photo-rm" title="Poista kuva">✕</button>' : ''}
+        ${c.photo ? '<button class="photo-rm" title="Poista kuva" aria-label="Poista kuva">✕</button>' : ''}
         <input type="text" class="name-in" value="${esc(c.name)}" placeholder="Ehdokkaan nimi" />
-        <button class="rm" title="Poista ehdokas">✕</button>
+        <button class="rm" title="Poista ehdokas" aria-label="Poista ehdokas">✕</button>
       </div>
     `).join('') || '<div class="hint">Ei ehdokkaita. Lisää vähintään yksi.</div>';
 
@@ -690,8 +796,10 @@ function emptyCandidates() {
 const modal = document.getElementById('modal');
 const modalBody = document.getElementById('modalBody');
 let modalHandlers = null;
+let modalLastFocus = null;
 
 function openModal(html, handlers) {
+  modalLastFocus = document.activeElement;      // palauta fokus tänne sulkiessa
   modalBody.innerHTML = html;
   modalHandlers = handlers;
   modal.hidden = false;
@@ -704,13 +812,23 @@ function openModal(html, handlers) {
   const ok = modalBody.querySelector('[data-act="ok"]');
   if (ok) ok.focus();
 }
-function closeModal() { modal.hidden = true; modalHandlers = null; }
+function closeModal() {
+  modal.hidden = true; modalHandlers = null;
+  if (modalLastFocus && modalLastFocus.focus) { try { modalLastFocus.focus(); } catch (_) {} }
+}
 
 modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
 document.addEventListener('keydown', (e) => {
   if (modal.hidden || !modalHandlers) return;
-  if (e.key === 'Escape' && modalHandlers.cancel) modalHandlers.cancel();
-  if (e.key === 'Enter' && modalHandlers.ok) modalHandlers.ok();
+  if (e.key === 'Escape' && modalHandlers.cancel) { modalHandlers.cancel(); return; }
+  if (e.key === 'Enter' && modalHandlers.ok) { modalHandlers.ok(); return; }
+  if (e.key === 'Tab') {                          // focus-trap: pidä fokus modaalin sisällä
+    const f = modalBody.querySelectorAll('button:not([disabled]), input, a[href]');
+    if (!f.length) return;
+    const first = f[0], last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
 });
 
 /* ---------------- Toast ---------------- */
@@ -733,26 +851,18 @@ if (MODE === 'cloud') {
   initCloud();
 } else {
   state = loadLocal();
-  // Vastaanota muutokset saman koneen muista ikkunoista
-  if (channel) {
-    channel.onmessage = (e) => {
-      if (e.data && Array.isArray(e.data.candidates)) { state = e.data; render(); }
-    };
-  }
-  window.addEventListener('storage', (e) => {
-    if (e.key === STORAGE_KEY && e.newValue) {
-      try {
-        const parsed = JSON.parse(e.newValue);
-        if (parsed && Array.isArray(parsed.candidates)) { state = parsed; render(); }
-      } catch (_) {}
-    }
-  });
+  attachLocalListeners();
 }
 
-// Esc poistuu selaimen kokonäytöstä -> synkkaa myös hash takaisin normaaliin
-document.addEventListener('fullscreenchange', () => {
-  if (!document.fullscreenElement && location.hash.includes('fs')) location.hash = '#/' + currentView();
-});
+// Esc poistuu selaimen kokonäytöstä -> synkkaa hash takaisin normaaliin (webkit-fallback mukana)
+function onFsChange() { if (!fsElement() && isFsHash()) location.hash = '#/' + currentView(); }
+document.addEventListener('fullscreenchange', onFsChange);
+document.addEventListener('webkitfullscreenchange', onFsChange);
+
+// Offline-tuki: service worker (network-first, ei vanhentunutta versiota) -> uudelleenlataus toimii ilman verkkoa
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
 
 window.addEventListener('hashchange', render);
 render();

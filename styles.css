@@ -47,6 +47,10 @@ html, body {
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
 .brand-text strong { font-size: 19px; letter-spacing: .2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-sub { font-size: 12.5px; opacity: .75; text-transform: uppercase; letter-spacing: 2px; }
+.netbanner {
+  background: #fff3cd; color: #7a5b00; text-align: center; padding: 9px 16px;
+  font-weight: 700; font-size: 14px; border-bottom: 1px solid #f0d98a; position: sticky; top: 0; z-index: 15;
+}
 .conn { text-transform: none; letter-spacing: .2px; font-weight: 600; }
 .cdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: baseline; }
 .cdot.ok { background: #3ad07a; box-shadow: 0 0 0 3px rgba(58,208,122,.28); }
@@ -249,7 +253,7 @@ html, body {
 .bar-val {
   position: absolute; top: 7px; left: 0; right: 0; text-align: center;
   color: #fff; font-weight: 800; font-size: clamp(15px, 1.9vw, 28px); line-height: 1;
-  text-shadow: 0 1px 3px rgba(0,0,0,.28);
+  text-shadow: 0 1px 4px rgba(0,0,0,.5), 0 0 2px rgba(0,0,0,.4);   /* luettavuus myös vaaleilla pylväillä */
 }
 .bar-col.leader .bar { box-shadow: inset 0 -6px 12px rgba(0,0,0,.12), 0 0 0 4px rgba(255,215,0,.55); }
 .bar-foot { text-align: center; }
@@ -266,6 +270,8 @@ html, body {
   padding: 40px; text-align: center; color: var(--muted); margin-top: 20px;
 }
 .empty-note h3 { color: var(--ink); margin: 0 0 8px; }
+.empty-note p { margin: 0 auto; max-width: 460px; }
+.err-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
 
 /* ---------- Setup ---------- */
 .setup-panel {
@@ -284,7 +290,7 @@ html, body {
 .cand-row { display: flex; align-items: center; gap: 12px; }
 .cand-row .swatch { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.1); cursor: pointer; }
 .cand-row input { flex: 1; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; font-family: inherit; }
-.cand-row .rm { background: #fff; border: 1px solid var(--line); color: var(--danger); border-radius: 9px; width: 40px; height: 40px; cursor: pointer; font-size: 18px; flex-shrink: 0; }
+.cand-row .rm { background: #fff; border: 1px solid var(--line); color: var(--danger); border-radius: 8px; width: 44px; height: 44px; cursor: pointer; font-size: 18px; flex-shrink: 0; }
 .cand-row .rm:hover { background: #fdeef0; }
 .cand-row .photo-btn {
   width: 44px; height: 58px; border-radius: 6px; flex-shrink: 0; cursor: pointer; overflow: hidden;
@@ -295,8 +301,8 @@ html, body {
 .cand-row .photo-btn .ph { font-size: 12px; font-weight: 700; color: var(--muted); }
 .cand-row .photo-btn:hover { border-color: var(--blue-light); background: #eef2fa; }
 .cand-row .photo-rm {
-  width: 26px; height: 26px; border-radius: 50%; flex-shrink: 0; cursor: pointer; margin-left: -6px;
-  border: 1px solid var(--line); background: #fff; color: var(--danger); font-size: 13px; line-height: 1;
+  width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; cursor: pointer; margin-left: -4px;
+  border: 1px solid var(--line); background: #fff; color: var(--danger); font-size: 14px; line-height: 1;
 }
 .cand-row .photo-rm:hover { background: #fdeef0; }
 .setup-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
