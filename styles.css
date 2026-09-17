@@ -153,7 +153,8 @@ html, body {
   background: var(--c, var(--blue)); flex-shrink: 0; overflow: hidden;
 }
 .avatar img, .bar-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.num-badge { font-size: 26px; font-weight: 800; }   /* ehdokasnumero kuvan tilalla (laskenta) */
+.num-badge { font-size: 26px; font-weight: 800; text-shadow: 0 1px 3px rgba(0,0,0,.4); }   /* ehdokasnumero kuvan tilalla (laskenta) */
+.hint code { background: #eef1f6; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
 .modal .m-cand .num-badge { font-size: 30px; }
 .cand-meta { min-width: 0; }
 .cand-name { font-weight: 700; font-size: 17px; }
@@ -238,6 +239,7 @@ html, body {
   min-height: 320px;
 }
 .bar-col { display: flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; gap: 10px; }
+.bar-col.col-hidden { display: none; }   /* tuloksissa näkyy vain top 4 */
 .bar-figures { text-align: center; }
 .bar-num { font-size: clamp(22px, 2.8vw, 44px); font-weight: 800; line-height: 1; }
 .bar-num-lbl { font-size: 12px; color: var(--muted); margin-top: 3px; text-transform: uppercase; letter-spacing: 1px; }

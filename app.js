@@ -247,8 +247,6 @@ function esc(s) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]
   ));
 }
-function pct(n, total) { return total ? (n / total * 100) : 0; }
-function fmtPct(x) { return x.toFixed(1).replace('.', ',') + ' %'; }
 
 /* Avatar: kuva jos ehdokkaalla on sellainen, muuten nimikirjaimet.
  * Väri ja kuva validoidaan tässäkin (defense-in-depth XSS:ää vastaan). */
@@ -370,20 +368,28 @@ function addVote(id) {
     persistLocal(); notify();
   }
 }
-function undoLast() {
+// Kumoa täsmälleen vahvistuksessa näytetty ääni (targetKey pilvessä / targetId paikallisesti),
+// ettei tila ehdi muuttua dialogin ollessa auki ja poista väärää ääntä.
+function undoLast(targetKey, targetId) {
   if (MODE === 'cloud') {
     const mine = myUndoable();
     if (!mine.length) return null;
-    const last = mine[mine.length - 1];         // viimeisin oma ääni ajan mukaan
-    pendingUndo.add(last.key);
-    votesRef.child(last.key).remove()
-      .catch(() => { pendingUndo.delete(last.key); toast('Kumous epäonnistui — tarkista yhteys', '#c8102e'); });
-    return { id: last.id };
+    let entry;
+    if (targetKey) {
+      entry = mine.find(v => v.key === targetKey);
+      if (!entry) { toast('Ääni oli jo poistunut', '#e07b00'); return null; }
+    } else { entry = mine[mine.length - 1]; }
+    pendingUndo.add(entry.key);
+    votesRef.child(entry.key).remove()
+      .catch(() => { pendingUndo.delete(entry.key); toast('Kumous epäonnistui — tarkista yhteys', '#c8102e'); });
+    return { id: entry.id };
   }
   if (!state.log.length) return null;
-  const removed = state.log.pop();
+  const last = state.log[state.log.length - 1];
+  if (targetId && last.id !== targetId) { toast('Viimeisin ääni muuttui — yritä uudelleen', '#e07b00'); return null; }
+  state.log.pop();
   persistLocal(); notify();
-  return removed;
+  return last;
 }
 function resetVotes() {
   if (MODE === 'cloud') { pendingUndo.clear(); votesRef.remove().catch(writeError); }
@@ -403,13 +409,15 @@ function saveMeta(title, candidates) {
 /* ---- Salasanat (laskenta + asetukset) ---- */
 function currentPwHash(section) { return state.pw[section] || hashStr(DEFAULT_PW[section]); }
 function checkPw(section, input) { return hashStr(input) === currentPwHash(section); }
-function isUnlocked(section) { return sessionStorage.getItem('unlock-' + section) === currentPwHash(section); }
-function setUnlocked(section) { sessionStorage.setItem('unlock-' + section, currentPwHash(section)); }
+// Avaus on istuntolippu (ei sidottu hashiin): salasanan vaihto toisella koneella EI heitä
+// jo sisällä olevaa laskijaa takaisin porttiin kesken laskennan.
+function isUnlocked(section) { return sessionStorage.getItem('unlock-' + section) === '1'; }
+function setUnlocked(section) { sessionStorage.setItem('unlock-' + section, '1'); }
 function savePassword(section, plain) {
   const h = hashStr(plain);
   if (MODE === 'cloud') metaRef.update({ [section === 'count' ? 'pwCount' : 'pwSetup']: h }).catch(writeError);
   else { state.pw[section] = h; persistLocal(); }
-  sessionStorage.setItem('unlock-' + section, h);   // päivitä oma lukituksen avaus, ettei lukkiudu ulos
+  setUnlocked(section);   // pidä oma istunto auki
 }
 
 /* ---------------- Render-runko ---------------- */
@@ -476,8 +484,8 @@ function renderGate(section) {
     <div class="gate">
       <h2>${label}</h2>
       <p>Syötä salasana jatkaaksesi.</p>
-      <input type="password" id="pwInput" class="gate-input" autocomplete="off" autocapitalize="off" />
-      <div class="pw-err" id="pwErr" hidden>Väärä salasana</div>
+      <input type="password" id="pwInput" class="gate-input" autocomplete="off" autocapitalize="off" aria-label="Salasana" />
+      <div class="pw-err" id="pwErr" role="alert" hidden>Väärä salasana</div>
       <button class="btn btn-primary btn-lg" id="pwOk">Avaa</button>
     </div>`;
   const input = app.querySelector('#pwInput');
@@ -522,10 +530,10 @@ function renderHome() {
 /* ---------------- Ääntenlasku ---------------- */
 function byNumber(a, b) {
   const na = parseInt(a.number, 10), nb = parseInt(b.number, 10);
-  if (isNaN(na) && isNaN(nb)) return 0;
-  if (isNaN(na)) return 1;            // numerottomat loppuun
-  if (isNaN(nb)) return -1;
-  return na - nb;
+  if (!isNaN(na) && !isNaN(nb) && na !== nb) return na - nb;
+  if (isNaN(na) && !isNaN(nb)) return 1;            // numerottomat loppuun
+  if (!isNaN(na) && isNaN(nb)) return -1;
+  return String(a.id).localeCompare(String(b.id));  // vakaa toissijainen (tasapeli/numeroton)
 }
 
 function renderCount() {
@@ -595,19 +603,21 @@ function confirmVote(cand) {
   });
 }
 
-/* Mikä ääni kumoutuisi seuraavaksi (poistamatta) — vahvistusta varten */
-function peekUndoCandidate() {
-  let id = null;
-  if (MODE === 'cloud') { const mine = myUndoable(); if (mine.length) id = mine[mine.length - 1].id; }
+/* Mikä ääni kumoutuisi seuraavaksi (poistamatta) — vahvistusta varten. Palauttaa myös avaimen. */
+function peekUndo() {
+  let key = null, id = null;
+  if (MODE === 'cloud') { const mine = myUndoable(); if (mine.length) { key = mine[mine.length - 1].key; id = mine[mine.length - 1].id; } }
   else if (state.log.length) id = state.log[state.log.length - 1].id;
   if (!id) return null;
-  return state.candidates.find(x => x.id === id)
+  const cand = state.candidates.find(x => x.id === id)
     || { id, name: '(poistettu ehdokas)', color: '#6c757d', number: '?' };
+  return { cand, key, id };
 }
 
 function confirmUndo() {
-  const cand = peekUndoCandidate();
-  if (!cand) return;   // ei kumottavaa
+  const info = peekUndo();
+  if (!info) return;   // ei kumottavaa
+  const cand = info.cand;
   openModal(`
     <div class="m-eyebrow">Kumoa viimeisin ääni</div>
     <div class="m-cand">
@@ -621,7 +631,7 @@ function confirmUndo() {
     </div>
   `, {
     ok: () => {
-      const removed = undoLast();
+      const removed = undoLast(info.key, info.id);   // poista täsmälleen näytetty ääni
       closeModal();
       if (removed) {
         const c = state.candidates.find(x => x.id === removed.id);
@@ -633,7 +643,7 @@ function confirmUndo() {
 }
 
 function confirmReset() {
-  const total = totalVotes();
+  const total = state.log.length;   // nollaus poistaa koko lokin (myös mahdolliset orpoäänet)
   openModal(`
     <div class="m-eyebrow">Nollaa äänet</div>
     <div class="m-cand"><span class="n">Poistetaanko kaikki ${total} ääntä?</span></div>
@@ -722,71 +732,67 @@ function renderResults() {
   const total = totalVotes();
   const isFs = isFsHash();
   const list = state.candidates;
-  const ranked = [...list].sort((a, b) => c[b.id] - c[a.id]);   // eniten ääniä vasemmalle
-  const maxCount = Math.max(0, ...list.map(x => c[x.id]));
+  // Näkyvissä VAIN 4 eniten ääniä saanutta; 0 ääntä -> ehdokasta ei näy ollenkaan
+  const visible = [...list].filter(x => c[x.id] > 0).sort((a, b) => c[b.id] - c[a.id]).slice(0, 4);
+  const visibleIds = new Set(visible.map(x => x.id));
+  const maxCount = Math.max(0, ...visible.map(x => c[x.id]));
   const ceiling = niceCeiling(maxCount);
 
-  // Rakenna luuranko vain kun ehdokasjoukko / kokonäyttö muuttuu; muuten päivitä paikallaan
+  // Luuranko sisältää kaikki ehdokkaat (rebuild vain kun ehdokasjoukko/kokonäyttö muuttuu);
+  // näkyvyys ja järjestys säädetään paikallaan -> sulava animaatio
   const sig = JSON.stringify(list.map(x => [x.id, x.name, x.color, !!x.photo])) + '|' + isFs;
   if (sig !== resultsSig) {
-    buildResults(ranked, isFs);
+    buildResults(list, isFs);
     resultsSig = sig;
-    void app.offsetHeight;                      // pakota asettelu, jotta ensimmäinenkin kasvu animoituu 0:sta
-  } else {
-    reorderBars(ranked.map(x => x.id));         // animoi pylväät oikeaan järjestykseen
+    void app.offsetHeight;
   }
+  updateVisibleBars(visible, visibleIds);   // piilota muut kuin top 4 + järjestä näkyvät (FLIP)
 
   const totalEl = app.querySelector('#resTotal') || app.querySelector('#resTotalFs');
   if (totalEl) totalEl.textContent = total;
   const emptyEl = app.querySelector('#resEmpty');
-  if (emptyEl) emptyEl.style.display = total === 0 ? '' : 'none';
+  if (emptyEl) emptyEl.style.display = visible.length === 0 ? '' : 'none';
+  const chartEl = app.querySelector('.chart');
+  if (chartEl) chartEl.style.display = visible.length === 0 ? 'none' : '';   // 0 ääntä -> tyhjä laatikko piiloon
 
-  const trackEl = app.querySelector('.bar-track');
+  const firstVis = visible[0];
+  const trackEl = firstVis ? app.querySelector(`.bar-col[data-id="${firstVis.id}"] .bar-track`) : null;
   const trackH = trackEl ? trackEl.clientHeight : 0;
-  const MINPX = isFs ? 62 : 42;                 // 0-pylvään perustaso (numero mahtuu sisään)
-  list.forEach(cand => {
+  const MINPX = isFs ? 62 : 42;                 // pienimmän pylvään perustaso (numero mahtuu sisään)
+  visible.forEach(cand => {
     const col = app.querySelector(`.bar-col[data-id="${cand.id}"]`);
     if (!col) return;
     const n = c[cand.id];
     const bar = col.querySelector('.bar');
     // Ensimmäinenkin ääni nostaa selvästi perustason yläpuolelle; kasvaa katosta ylöspäin
     bar.style.height = (trackH > MINPX)
-      ? Math.round(n <= 0 ? MINPX : MINPX + (n / ceiling) * (trackH - MINPX)) + 'px'
+      ? Math.round(MINPX + (n / ceiling) * (trackH - MINPX)) + 'px'
       : (n / ceiling * 100) + '%';
     bar.querySelector('.bar-val').textContent = n;
-    col.classList.toggle('leader', n > 0 && n === maxCount);
+    col.classList.toggle('leader', n === maxCount);
   });
 }
 
-// FLIP: siirrä pylväät sulavasti uuteen järjestykseen (eniten ääniä vasemmalle)
-function reorderBars(rankedIds) {
+// Piilota muut kuin näkyvät (top 4) ja siirrä näkyvät sulavasti äänijärjestykseen (FLIP)
+function updateVisibleBars(visible, visibleIds) {
   const bars = app.querySelector('.bars');
   if (!bars) return;
+  const cols = Array.from(bars.children);
   const first = new Map();
-  Array.from(bars.children).forEach(col => first.set(col.dataset.id, col.getBoundingClientRect().left));
-  rankedIds.forEach(id => {
-    const col = bars.querySelector(`.bar-col[data-id="${id}"]`);
-    if (col) bars.appendChild(col);
+  cols.forEach(col => { if (!col.classList.contains('col-hidden')) first.set(col.dataset.id, col.getBoundingClientRect().left); });
+  cols.forEach(col => col.classList.toggle('col-hidden', !visibleIds.has(col.dataset.id)));
+  visible.forEach(v => { const col = bars.querySelector(`.bar-col[data-id="${v.id}"]`); if (col) bars.appendChild(col); });
+  const anims = [];
+  visible.forEach(v => {
+    const col = bars.querySelector(`.bar-col[data-id="${v.id}"]`);
+    if (!col || !first.has(v.id)) return;   // aiemmin piilossa olleet vain ilmestyvät
+    const dx = first.get(v.id) - col.getBoundingClientRect().left;
+    if (dx) { col.style.transition = 'none'; col.style.transform = `translateX(${dx}px)`; anims.push(col); }
   });
-  const deltas = new Map();
-  let moved = false;
-  rankedIds.forEach(id => {
-    const col = bars.querySelector(`.bar-col[data-id="${id}"]`);
-    if (!col) return;
-    const dx = first.get(id) - col.getBoundingClientRect().left;
-    deltas.set(id, dx);
-    if (dx) moved = true;
-  });
-  if (!moved) return;
-  rankedIds.forEach(id => {
-    const col = bars.querySelector(`.bar-col[data-id="${id}"]`);
-    if (col) { col.style.transition = 'none'; col.style.transform = `translateX(${deltas.get(id)}px)`; }
-  });
-  void bars.offsetWidth;
-  rankedIds.forEach(id => {
-    const col = bars.querySelector(`.bar-col[data-id="${id}"]`);
-    if (col) { col.style.transition = 'transform .5s cubic-bezier(.22,.61,.36,1)'; col.style.transform = ''; }
-  });
+  if (anims.length) {
+    void bars.offsetWidth;
+    anims.forEach(col => { col.style.transition = 'transform .5s cubic-bezier(.22,.61,.36,1)'; col.style.transform = ''; });
+  }
 }
 
 function enterFullscreen() {
@@ -828,16 +834,25 @@ function renderSetup() {
     </div>
     <div class="setup-panel">
       <h3 class="sp-h">Salasanat</h3>
-      <p class="hint" style="margin-top:0">Jätä tyhjäksi jos et halua vaihtaa. Muutos koskee kaikkia koneita.</p>
+      <p class="hint" style="margin-top:0">Jätä tyhjäksi jos et halua vaihtaa. Muutos koskee kaikkia koneita. Kirjoita uusi salasana kahdesti.</p>
       <div class="field">
         <label for="pwCountInput">Ääntenlaskun salasana</label>
         <input type="text" id="pwCountInput" placeholder="uusi laskennan salasana" autocomplete="off" />
       </div>
       <div class="field">
+        <label for="pwCountInput2">Vahvista laskennan salasana</label>
+        <input type="text" id="pwCountInput2" placeholder="kirjoita uudelleen" autocomplete="off" />
+      </div>
+      <div class="field">
         <label for="pwSetupInput">Asetusten salasana</label>
         <input type="text" id="pwSetupInput" placeholder="uusi asetusten salasana" autocomplete="off" />
       </div>
+      <div class="field">
+        <label for="pwSetupInput2">Vahvista asetusten salasana</label>
+        <input type="text" id="pwSetupInput2" placeholder="kirjoita uudelleen" autocomplete="off" />
+      </div>
       <button class="btn btn-primary" id="savePwBtn">Tallenna salasanat</button>
+      <p class="hint">Jos salasana unohtuu: poista kenttä <code>meta/pwCount</code> tai <code>meta/pwSetup</code> Firebase-konsolista, niin oletussalasana palautuu.</p>
     </div>
     <div class="setup-panel danger-zone">
       <h3>Nollaa äänet</h3>
@@ -910,12 +925,15 @@ function renderSetup() {
 
   app.querySelector('#savePwBtn').addEventListener('click', () => {
     const pc = app.querySelector('#pwCountInput').value.trim();
+    const pc2 = app.querySelector('#pwCountInput2').value.trim();
     const ps = app.querySelector('#pwSetupInput').value.trim();
+    const ps2 = app.querySelector('#pwSetupInput2').value.trim();
     if (!pc && !ps) { toast('Anna vähintään yksi uusi salasana', '#c8102e'); return; }
+    if (pc && pc !== pc2) { toast('Laskennan salasanat eivät täsmää', '#c8102e'); return; }
+    if (ps && ps !== ps2) { toast('Asetusten salasanat eivät täsmää', '#c8102e'); return; }
     if (pc) savePassword('count', pc);
     if (ps) savePassword('setup', ps);
-    app.querySelector('#pwCountInput').value = '';
-    app.querySelector('#pwSetupInput').value = '';
+    ['#pwCountInput', '#pwCountInput2', '#pwSetupInput', '#pwSetupInput2'].forEach(s => app.querySelector(s).value = '');
     toast('Salasanat päivitetty', '#178a3f');
   });
 
@@ -996,6 +1014,14 @@ if (MODE === 'cloud') {
 function onFsChange() { if (!fsElement() && isFsHash()) location.hash = '#/' + currentView(); }
 document.addEventListener('fullscreenchange', onFsChange);
 document.addEventListener('webkitfullscreenchange', onFsChange);
+
+// Ikkunan koon muutos -> laske tulospylväiden px-korkeudet uudelleen (iso näyttö / HDMI / skaalaus)
+let resizeTimer = null;
+window.addEventListener('resize', () => {
+  if (currentView() !== 'results') return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => { resultsSig = null; render(); }, 150);
+});
 
 // Offline-tuki: service worker (network-first, ei vanhentunutta versiota) -> uudelleenlataus toimii ilman verkkoa
 if ('serviceWorker' in navigator) {

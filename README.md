@@ -6,11 +6,22 @@ pylväsdiagrammia.
 
 ## Toiminnot
 
-- **Ääntenlasku** — laskija klikkaa ehdokasta, vahvistaa äänen erillisellä dialogilla
-  (estää vahinkoäänet) ja ääni kirjautuu. Mukana "kumoa viimeisin" ja "nollaa laskenta".
-- **Äänten katsominen (tulokset)** — YLE-tyylinen pylväsdiagrammi, jossa kaikki ehdokkaat,
-  äänimäärät, prosentit ja kärjessä oleva korostettuna. Koko näytön tila isolle näytölle.
-- **Asetukset** — muokkaa vaalin nimeä ja ehdokkaita (nimet + värit).
+- **Ääntenlasku** — laskija klikkaa ehdokasta (ehdokkaat numerojärjestyksessä, numero näkyy
+  kuvan tilalla), vahvistaa äänen erillisellä dialogilla (estää vahinkoäänet) ja ääni kirjautuu.
+  "Kumoa viimeisin" pyytää vahvistuksen ja näyttää minkä äänen poistaa. Salasanasuojattu.
+- **Äänten katsominen (tulokset)** — YLE-tyylinen pylväsdiagrammi, jossa näkyy **4 eniten
+  ääniä saanutta** (0 ääntä = ei näy), äänimäärät ja kärki korostettuna. Koko näytön tila
+  isolle näytölle. Avoin (ei salasanaa).
+- **Asetukset** — muokkaa vaalin nimeä, ehdokkaita (numero + nimi + väri + kuva) ja
+  salasanoja. Salasanasuojattu.
+
+### Salasanat
+Ääntenlasku ja Asetukset ovat salasanasuojattuja. Oletukset: laskenta `Mlasku`,
+asetukset `M.asetukset` (vaihdettavissa Asetuksista). **Huom:** tämä on *vahinkoeste*, ei
+todellinen tietoturva — koska pilvitietokanta on test modessa (julkinen), salasanan voi
+kiertää eikä se suojaa itse äänidataa. Todellinen suoja vaatii Firebase Authin + tiukat
+tietokantasäännöt. Jos salasana unohtuu: poista `meta/pwCount` / `meta/pwSetup` Firebase-
+konsolista → oletussalasana palautuu.
 
 ## Kaksi toimintatilaa
 
@@ -57,8 +68,13 @@ Käytä `http://`-osoitetta (ei `file://`), jotta ikkunoiden välinen synkka toi
 
 ## Käyttö vaalipäivänä
 
-1. Avaa **Asetukset** ja syötä oikeat ehdokkaat (poista esimerkkiehdokkaat).
-2. Avaa **Tulokset** isolle näytölle ja paina "Koko näyttö".
-3. Avaa **Ääntenlasku** laskijan ikkunaan ja aloita klikkaus + vahvistus jokaiselle äänelle.
+1. Tee jokaisella koneella **kova uudelleenlataus** (Cmd+Shift+R) — varmistaa tuoreimman
+   koodin (service worker on network-first; jos deployasit juuri, nosta myös `CACHE`-versio
+   tiedostossa `sw.js`).
+2. Avaa **Asetukset** ja syötä oikeat ehdokkaat + numerot (poista esimerkkiehdokkaat).
+   Vaihda halutessasi salasanat.
+3. Paina **Asetukset → "Nollaa äänet"** ennen oikeaa laskentaa (poistaa testiäänet).
+4. Avaa **Tulokset** isolle näytölle ja paina "Koko näyttö".
+5. Avaa **Ääntenlasku** laskijan ikkunaan ja aloita klikkaus + vahvistus jokaiselle äänelle.
 
 Tekniikka: pelkkä HTML + CSS + vanilla JS, ei riippuvuuksia.
