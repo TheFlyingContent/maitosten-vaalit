@@ -351,7 +351,6 @@ function renderHome() {
 
 /* ---------------- Ääntenlasku ---------------- */
 function renderCount() {
-  const c = counts();
   if (!state.candidates.length) {
     app.innerHTML = emptyCandidates();
     return;
@@ -368,7 +367,6 @@ function renderCount() {
       </div>
       <div class="count-actions">
         <button class="btn btn-ghost" id="undoBtn" ${canUndo() ? '' : 'disabled'}>Kumoa viimeisin${MODE === 'cloud' ? ' (tältä koneelta)' : ''}</button>
-        <button class="btn btn-ghost" id="resetBtn" ${totalVotes() ? '' : 'disabled'}>Nollaa laskenta</button>
         <button class="btn btn-ghost" id="fsBtnCount">${location.hash.includes('fs') ? 'Poistu koko näytöstä' : 'Koko näyttö'}</button>
       </div>
     </div>
@@ -378,7 +376,6 @@ function renderCount() {
           ${avatarHTML(cand, 'avatar')}
           <span class="cand-meta">
             <span class="cand-name">${esc(cand.name)}</span>
-            <span class="cand-votes"><b>${c[cand.id]}</b> ääntä</span>
           </span>
         </button>
       `).join('')}
@@ -398,7 +395,6 @@ function renderCount() {
       toast(`Kumottu${cand ? ': ' + cand.name : ''}`, cand ? cand.color : '#c8102e');
     }
   });
-  app.querySelector('#resetBtn').addEventListener('click', confirmReset);
   app.querySelector('#fsBtnCount').addEventListener('click', () =>
     location.hash.includes('fs') ? exitFullscreen() : enterFullscreen());
 }
@@ -427,18 +423,29 @@ function confirmVote(cand) {
 }
 
 function confirmReset() {
+  const total = totalVotes();
   openModal(`
-    <div class="m-eyebrow">Nollaa laskenta</div>
-    <div class="m-cand"><span class="n">Poistetaanko kaikki ${totalVotes()} ääntä?</span></div>
-    <div class="m-q">Tätä ei voi perua. Ehdokkaat säilyvät, mutta kaikki äänet nollataan.</div>
+    <div class="m-eyebrow">Nollaa äänet</div>
+    <div class="m-cand"><span class="n">Poistetaanko kaikki ${total} ääntä?</span></div>
+    <div class="m-q">Tätä ei voi perua. Ehdokkaat säilyvät. Kirjoita <b>NOLLAA</b> vahvistaaksesi.</div>
+    <input type="text" id="resetConfirm" class="m-input" placeholder="NOLLAA" autocomplete="off" autocapitalize="characters" />
     <div class="m-actions">
       <button class="btn btn-ghost" data-act="cancel">Peruuta</button>
-      <button class="btn btn-danger" data-act="ok">Nollaa kaikki äänet</button>
+      <button class="btn btn-danger" data-act="ok" id="resetOk" disabled>Nollaa kaikki äänet</button>
     </div>
   `, {
-    ok: () => { resetVotes(); closeModal(); toast('Laskenta nollattu', '#c8102e'); },
+    // Vahvistus vaatii tekstin "NOLLAA" — tarkistetaan tässä myös Enter-näppäimen varalta
+    ok: () => {
+      const inp = modalBody.querySelector('#resetConfirm');
+      if (!inp || inp.value.trim().toUpperCase() !== 'NOLLAA') return;
+      resetVotes(); closeModal(); toast('Äänet nollattu', '#c8102e');
+    },
     cancel: closeModal,
   });
+  const input = modalBody.querySelector('#resetConfirm');
+  const ok = modalBody.querySelector('#resetOk');
+  input.addEventListener('input', () => { ok.disabled = input.value.trim().toUpperCase() !== 'NOLLAA'; });
+  input.focus();
 }
 
 function flashCard(id) {
@@ -459,8 +466,10 @@ function niceCeiling(maxCount) {
 function buildResults(ordered, isFs) {
   app.innerHTML = `
     ${isFs ? `
-    <div class="fs-total"><b id="resTotalFs">0</b> ääntä laskettu</div>
-    <button id="fsExit" class="fs-exit" title="Poistu kokonäytöstä (Esc)">✕</button>
+    <div class="fs-bar">
+      <div class="fs-total"><b id="resTotalFs">0</b> ääntä laskettu</div>
+      <button id="fsExit" class="fs-exit" title="Poistu kokonäytöstä (Esc)">✕</button>
+    </div>
     ` : `
     <div class="results-head">
       <div>
@@ -601,6 +610,11 @@ function renderSetup() {
         Ehdokkaan poistaminen ei poista jo kirjattuja ääniä toisilta ehdokkailta.
       </div>
     </div>
+    <div class="setup-panel danger-zone">
+      <h3>Nollaa äänet</h3>
+      <p>Poistaa kaikki lasketut äänet kaikilta koneilta. Ehdokkaat säilyvät. Tätä ei voi perua.</p>
+      <button class="btn btn-danger" id="resetVotesBtn">Nollaa äänet…</button>
+    </div>
   `;
 
   // Työskennellään kopiolla, tallennus vasta "Tallenna"-napista
@@ -660,6 +674,8 @@ function renderSetup() {
     toast('Tallennettu', '#178a3f');
     location.hash = '#/count';
   });
+
+  app.querySelector('#resetVotesBtn').addEventListener('click', confirmReset);
 }
 
 function emptyCandidates() {

@@ -186,7 +186,12 @@ html, body {
 .modal .m-cand { display: flex; align-items: center; gap: 16px; margin: 16px 0 8px; }
 .modal .m-cand .avatar { width: 60px; height: 80px; font-size: 22px; }
 .modal .m-cand .n { font-size: 24px; font-weight: 800; }
-.modal .m-q { color: var(--muted); font-size: 15px; margin: 10px 0 24px; }
+.modal .m-q { color: var(--muted); font-size: 15px; margin: 10px 0 16px; }
+.modal .m-input {
+  width: 100%; padding: 11px 13px; border: 1px solid var(--line); border-radius: 6px;
+  font-size: 16px; font-family: inherit; margin-bottom: 20px; text-transform: uppercase;
+}
+.modal .m-input:focus { outline: 2px solid var(--danger); border-color: var(--danger); }
 .modal .m-actions { display: flex; gap: 12px; }
 .modal .m-actions .btn { flex: 1; }
 
@@ -299,6 +304,10 @@ html, body {
 
 .hint { color: var(--muted); font-size: 13.5px; margin-top: 10px; line-height: 1.5; }
 
+.danger-zone { margin-top: 20px; border-color: #f0d0d5; }
+.danger-zone h3 { margin: 0 0 6px; color: var(--danger); font-size: 16px; }
+.danger-zone p { margin: 0 0 14px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+
 /* ---------- Fullscreen (tulokset ja laskenta) ---------- */
 body.fs .topbar { display: none; }
 body.fs .page-head { display: none; }
@@ -306,26 +315,23 @@ body.fs .app.wide { padding: 22px 30px; }
 /* Laskenta kokonäytössä: isommat kortit */
 body.fs .cand-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 body.fs .cand-card { padding: 22px; }
-body.fs .cand-card .avatar { width: 64px; height: 64px; font-size: 22px; }
+body.fs .cand-card .avatar { width: 60px; height: 80px; font-size: 22px; }
 body.fs .cand-name { font-size: 20px; }
-body.fs .chart { padding: 22px 26px; }
-body.fs .bars { height: calc(100vh - 92px); }
+body.fs .chart { padding: 20px 26px; }
+body.fs .bars { height: calc(100vh - 150px); }
 body.fs #resEmpty { display: none !important; }
 body.fs .bar-val { font-size: clamp(22px, 2.6vw, 46px); }
 body.fs .bar-avatar { width: 84px; height: 112px; }
 body.fs .bar-name { font-size: 20px; }
-.fs-total {
-  position: fixed; top: 18px; left: 24px; z-index: 30;
-  font-size: 16px; font-weight: 600; color: var(--muted);
-}
+/* Kokonäytön yläpalkki omalla rivillään, ei pylväiden päällä */
+.fs-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.fs-total { font-size: 18px; font-weight: 600; color: var(--muted); }
 .fs-total b { color: var(--blue); font-size: 26px; }
 .fs-exit {
-  position: fixed; top: 16px; right: 18px; z-index: 30;
-  width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
-  background: rgba(16,35,61,.14); color: var(--ink); font-size: 18px; line-height: 1;
-  opacity: .3; transition: opacity .15s, background .15s;
+  width: 42px; height: 42px; border-radius: 8px; border: 1px solid var(--line); cursor: pointer;
+  background: #fff; color: var(--ink); font-size: 18px; line-height: 1;
 }
-.fs-exit:hover { opacity: 1; background: rgba(16,35,61,.24); }
+.fs-exit:hover { background: #f5f7fb; }
 
 /* ---------- Kuvan rajaus ---------- */
 .crop-overlay {
