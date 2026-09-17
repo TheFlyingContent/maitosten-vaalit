@@ -153,6 +153,8 @@ html, body {
   background: var(--c, var(--blue)); flex-shrink: 0; overflow: hidden;
 }
 .avatar img, .bar-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.num-badge { font-size: 26px; font-weight: 800; }   /* ehdokasnumero kuvan tilalla (laskenta) */
+.modal .m-cand .num-badge { font-size: 30px; }
 .cand-meta { min-width: 0; }
 .cand-name { font-weight: 700; font-size: 17px; }
 .cand-votes { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
@@ -245,7 +247,7 @@ html, body {
   background: var(--c, var(--blue));
   border-radius: 8px 8px 0 0;
   height: 0;
-  min-height: 34px;
+  min-height: 48px;                 /* 0 ääntä: numero mahtuu kokonaan pylvääseen */
   transition: height .6s cubic-bezier(.22,.61,.36,1);
   position: relative;
   box-shadow: inset 0 -6px 12px rgba(0,0,0,.12);
@@ -263,6 +265,7 @@ html, body {
   border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.15); overflow: hidden;
 }
 .bar-name { font-weight: 700; font-size: 15px; }
+.bar-name .bn-last { margin-left: .3em; }                 /* normaalinäkymä: etu- ja sukunimi samalla rivillä */
 .bar-crown { font-size: 16px; visibility: hidden; margin-right: 3px; }
 
 .empty-note {
@@ -289,6 +292,7 @@ html, body {
 .cand-rows { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 16px; }
 .cand-row { display: flex; align-items: center; gap: 12px; }
 .cand-row .swatch { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; border: 1px solid rgba(0,0,0,.1); cursor: pointer; }
+.field .cand-row .num-in { flex: 0 0 54px; width: 54px; max-width: 54px; text-align: center; padding: 11px 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 15px; font-family: inherit; }
 .cand-row input { flex: 1; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; font-family: inherit; }
 .cand-row .rm { background: #fff; border: 1px solid var(--line); color: var(--danger); border-radius: 8px; width: 44px; height: 44px; cursor: pointer; font-size: 18px; flex-shrink: 0; }
 .cand-row .rm:hover { background: #fdeef0; }
@@ -310,6 +314,23 @@ html, body {
 
 .hint { color: var(--muted); font-size: 13.5px; margin-top: 10px; line-height: 1.5; }
 
+.sp-h { margin: 0 0 4px; font-size: 16px; }
+
+/* Salasanaportti (laskenta / asetukset) */
+.gate {
+  max-width: 380px; margin: 8vh auto 0; background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 30px; text-align: center;
+}
+.gate h2 { margin: 0 0 6px; }
+.gate p { margin: 0 0 18px; color: var(--muted); }
+.gate-input {
+  width: 100%; padding: 13px 14px; border: 1px solid var(--line); border-radius: 8px;
+  font-size: 17px; font-family: inherit; text-align: center; margin-bottom: 12px;
+}
+.gate-input:focus { outline: 2px solid var(--blue-light); border-color: var(--blue-light); }
+.gate .btn { width: 100%; }
+.pw-err { color: var(--danger); font-weight: 700; font-size: 14px; margin-bottom: 12px; }
+
 .danger-zone { margin-top: 20px; border-color: #f0d0d5; }
 .danger-zone h3 { margin: 0 0 6px; color: var(--danger); font-size: 16px; }
 .danger-zone p { margin: 0 0 14px; color: var(--muted); font-size: 14px; line-height: 1.5; }
@@ -326,9 +347,13 @@ body.fs .cand-name { font-size: 20px; }
 body.fs .chart { padding: 20px 26px; }
 body.fs .bars { height: calc(100vh - 150px); }
 body.fs #resEmpty { display: none !important; }
+body.fs .bar { min-height: 66px; }        /* isompi tyhjä aloituspylväs kokonäytössä */
 body.fs .bar-val { font-size: clamp(22px, 2.6vw, 46px); }
 body.fs .bar-avatar { width: 84px; height: 112px; }
-body.fs .bar-name { font-size: 20px; }
+/* Kokonäytössä nimi kahdella rivillä (etunimi ylhäällä, sukunimi alhaalla) -> pilarit tasakokoiset */
+body.fs .bar-name { font-size: 20px; line-height: 1.25; }
+body.fs .bar-name .bn-first, body.fs .bar-name .bn-last { display: block; margin: 0; }
+body.fs .bar-name .bn-last { min-height: 1.25em; }         /* varaa rivi myös yksinimisille */
 /* Kokonäytön yläpalkki omalla rivillään, ei pylväiden päällä */
 .fs-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .fs-total { font-size: 18px; font-weight: 600; color: var(--muted); }

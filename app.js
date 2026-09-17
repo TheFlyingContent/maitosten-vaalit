@@ -21,13 +21,17 @@ const PALETTE = [
 
 const DEFAULT_TITLE = 'Maitoisten Opiston presidentinvaalit';
 const DEFAULT_CANDIDATES = () => ([
-  { id: 'c1', name: 'Alexander Virtanen', color: PALETTE[0], photo: null },
-  { id: 'c2', name: 'Sanna Korhonen',     color: PALETTE[1], photo: null },
-  { id: 'c3', name: 'Pekka Nieminen',     color: PALETTE[2], photo: null },
-  { id: 'c4', name: 'Li Mäkinen',         color: PALETTE[3], photo: null },
-  { id: 'c5', name: 'Olli Hämäläinen',    color: PALETTE[4], photo: null },
-  { id: 'c6', name: 'Riikka Laine',       color: PALETTE[5], photo: null },
+  { id: 'c1', name: 'Alexander Virtanen', color: PALETTE[0], photo: null, number: '2' },
+  { id: 'c2', name: 'Sanna Korhonen',     color: PALETTE[1], photo: null, number: '3' },
+  { id: 'c3', name: 'Pekka Nieminen',     color: PALETTE[2], photo: null, number: '4' },
+  { id: 'c4', name: 'Li Mäkinen',         color: PALETTE[3], photo: null, number: '5' },
+  { id: 'c5', name: 'Olli Hämäläinen',    color: PALETTE[4], photo: null, number: '6' },
+  { id: 'c6', name: 'Riikka Laine',       color: PALETTE[5], photo: null, number: '7' },
 ]);
+
+// Salasanat (laskenta + asetukset). Vaihdettavissa asetuksista; tallennetaan hashattuna.
+const DEFAULT_PW = { count: 'Mlasku', setup: 'M.asetukset' };
+function hashStr(s) { let h = 5381; s = String(s); for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0; return String(h >>> 0); }
 
 /* Sanitointi: kaikki ehdokasdata (myös pilvestä/toisesta ikkunasta tuleva) puhdistetaan
  * ennen renderöintiä -> estää XSS-injektion väri-/kuvakenttien kautta ja rajoittaa koon. */
@@ -38,13 +42,18 @@ function sanitizeCandidates(arr) {
     name: String((c && c.name) || '').slice(0, 60),
     color: (c && typeof c.color === 'string' && HEX.test(c.color)) ? c.color : PALETTE[0],
     photo: (c && typeof c.photo === 'string' && c.photo.startsWith('data:image/') && c.photo.length < 300000) ? c.photo : null,
+    number: String((c && c.number) || '').slice(0, 4),
   }));
 }
 function sanitizeTitle(t) { return String(t || DEFAULT_TITLE).slice(0, 100); }
+function sanitizePw(pw) {
+  return { count: (pw && typeof pw.count === 'string') ? pw.count : null,
+           setup: (pw && typeof pw.setup === 'string') ? pw.setup : null };
+}
 
 /* Yhtenäinen muistinvarainen tila, jonka näkymät lukevat.
  *   log: [{id, t, key?}]  (key on olemassa vain pilvitilassa kumoamista varten) */
-let state = { title: DEFAULT_TITLE, candidates: [], log: [] };
+let state = { title: DEFAULT_TITLE, candidates: [], log: [], pw: { count: null, setup: null } };
 let ready = (MODE === 'local');   // pilvitilassa true kun ensimmäinen data on saapunut
 let connected = false;
 let everConnected = false;        // onko pilviyhteys joskus muodostunut (erottaa "ei koskaan" vs "katkesi")
@@ -72,11 +81,11 @@ function loadLocal() {
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.candidates)) {
         return { title: sanitizeTitle(parsed.title), candidates: sanitizeCandidates(parsed.candidates),
-                 log: Array.isArray(parsed.log) ? parsed.log : [] };
+                 log: Array.isArray(parsed.log) ? parsed.log : [], pw: sanitizePw(parsed.pw) };
       }
     }
   } catch (e) { /* ignore */ }
-  return { title: DEFAULT_TITLE, candidates: DEFAULT_CANDIDATES(), log: [] };
+  return { title: DEFAULT_TITLE, candidates: DEFAULT_CANDIDATES(), log: [], pw: { count: null, setup: null } };
 }
 function persistLocal() {
   try {
@@ -94,7 +103,7 @@ function attachLocalListeners() {
   localListenersAttached = true;
   const adopt = (obj) => {
     state = { title: sanitizeTitle(obj.title), candidates: sanitizeCandidates(obj.candidates),
-              log: Array.isArray(obj.log) ? obj.log : [] };
+              log: Array.isArray(obj.log) ? obj.log : [], pw: sanitizePw(obj.pw) };
     render();
   };
   if (channel) channel.onmessage = (e) => { if (e.data && Array.isArray(e.data.candidates)) adopt(e.data); };
@@ -169,6 +178,7 @@ function initCloud() {
         const m = snap.val() || {};
         state.title = sanitizeTitle(m.title);
         state.candidates = sanitizeCandidates(m.candidates);
+        state.pw = { count: m.pwCount || null, setup: m.pwSetup || null };
         cloudReady();
       });
       votesRef.on('value', snap => {
@@ -249,6 +259,21 @@ function avatarHTML(cand, cls) {
     return `<span class="${cls}" style="--c:${color}"><img src="${esc(photo)}" alt=""></span>`;
   }
   return `<span class="${cls}" style="--c:${color}">${esc(initials(cand.name))}</span>`;
+}
+
+/* Ehdokasnumero (näytetään kuvan tilalla vain laskennassa). Ilman numeroa -> nimikirjaimet. */
+function numberBadge(cand) {
+  const color = HEX.test(cand.color || '') ? cand.color : PALETTE[0];
+  const num = String(cand.number || '').trim();
+  return `<span class="avatar num-badge" style="--c:${color}">${esc(num || initials(cand.name))}</span>`;
+}
+
+/* Nimi kahtena rivinä (etunimi ylhäällä, sukunimi alhaalla) — kokonäytössä pilarit tasakokoisiksi */
+function nameSpans(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  const first = parts.length ? parts[0] : '';
+  const last = parts.length > 1 ? parts.slice(1).join(' ') : '';
+  return `<span class="bn-first">${esc(first)}</span><span class="bn-last">${esc(last)}</span>`;
 }
 
 /* Rajausikkuna: käyttäjä raahaa ja zoomaa kuvaa 3:4-suorakulmioon.
@@ -366,13 +391,25 @@ function resetVotes() {
 }
 function saveMeta(title, candidates) {
   if (MODE === 'cloud') {
-    metaRef.set({ title, candidates }).catch(writeError);
+    metaRef.update({ title, candidates }).catch(writeError);   // update säilyttää salasanat meta-nodessa
   } else {
     // Säilytä orpoäänet kuten pilvitilassakin (counts() jättää ne huomiotta) -> yhtenäinen käytös
     state.title = title;
     state.candidates = candidates;
     persistLocal(); notify();
   }
+}
+
+/* ---- Salasanat (laskenta + asetukset) ---- */
+function currentPwHash(section) { return state.pw[section] || hashStr(DEFAULT_PW[section]); }
+function checkPw(section, input) { return hashStr(input) === currentPwHash(section); }
+function isUnlocked(section) { return sessionStorage.getItem('unlock-' + section) === currentPwHash(section); }
+function setUnlocked(section) { sessionStorage.setItem('unlock-' + section, currentPwHash(section)); }
+function savePassword(section, plain) {
+  const h = hashStr(plain);
+  if (MODE === 'cloud') metaRef.update({ [section === 'count' ? 'pwCount' : 'pwSetup']: h }).catch(writeError);
+  else { state.pw[section] = h; persistLocal(); }
+  sessionStorage.setItem('unlock-' + section, h);   // päivitä oma lukituksen avaus, ettei lukkiudu ulos
 }
 
 /* ---------------- Render-runko ---------------- */
@@ -421,10 +458,36 @@ function render() {
     return;
   }
 
+  // Salasanaportti laskennalle ja asetuksille (tulokset ja etusivu ovat avoimia)
+  if ((view === 'count' && !isUnlocked('count')) || (view === 'setup' && !isUnlocked('setup'))) {
+    renderGate(view);
+    return;
+  }
+
   if (view === 'count') renderCount();
   else if (view === 'results') renderResults();
   else if (view === 'setup') renderSetup();
   else renderHome();
+}
+
+function renderGate(section) {
+  const label = section === 'setup' ? 'Asetukset' : 'Ääntenlasku';
+  app.innerHTML = `
+    <div class="gate">
+      <h2>${label}</h2>
+      <p>Syötä salasana jatkaaksesi.</p>
+      <input type="password" id="pwInput" class="gate-input" autocomplete="off" autocapitalize="off" />
+      <div class="pw-err" id="pwErr" hidden>Väärä salasana</div>
+      <button class="btn btn-primary btn-lg" id="pwOk">Avaa</button>
+    </div>`;
+  const input = app.querySelector('#pwInput');
+  const submit = () => {
+    if (checkPw(section, input.value)) { setUnlocked(section); render(); }
+    else { app.querySelector('#pwErr').hidden = false; input.value = ''; input.focus(); }
+  };
+  app.querySelector('#pwOk').addEventListener('click', submit);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  input.focus();
 }
 
 /* ---------------- Etusivu ---------------- */
@@ -480,7 +543,7 @@ function renderCount() {
     <div class="cand-grid">
       ${state.candidates.map(cand => `
         <button class="cand-card" style="--c:${cand.color}" data-id="${cand.id}">
-          ${avatarHTML(cand, 'avatar')}
+          ${numberBadge(cand)}
           <span class="cand-meta">
             <span class="cand-name">${esc(cand.name)}</span>
           </span>
@@ -510,7 +573,7 @@ function confirmVote(cand) {
   openModal(`
     <div class="m-eyebrow">Vahvista ääni</div>
     <div class="m-cand">
-      ${avatarHTML(cand, 'avatar')}
+      ${numberBadge(cand)}
       <span class="n">${esc(cand.name)}</span>
     </div>
     <div class="m-q">Kirjataanko yksi ääni tälle ehdokkaalle?</div>
@@ -563,11 +626,11 @@ function flashCard(id) {
 /* ---------------- Tulokset ---------------- */
 let resultsSig = null;   // rakennetaan luuranko uudelleen vain kun ehdokkaat / kokonäyttö muuttuu
 
-// Kasvava "katto" pylväille: parilla äänellä pylväs ei ole täysi, vaan täyttyy äänien karttuessa
+// Kasvava "katto" pylväille: yhdellä äänellä pylväs on pieni (1/6) ja kasvaa äänien karttuessa
 function niceCeiling(maxCount) {
-  if (maxCount <= 0) return 1;
+  if (maxCount <= 0) return 6;
   const step = maxCount < 10 ? 2 : maxCount < 30 ? 5 : maxCount < 100 ? 10 : 25;
-  return (Math.floor(maxCount / step) + 1) * step;
+  return Math.max(6, (Math.floor(maxCount / step) + 1) * step);   // vähintään 6 -> aloitus pieni
 }
 
 function buildResults(ordered, isFs) {
@@ -600,7 +663,7 @@ function buildResults(ordered, isFs) {
             </div>
             <div class="bar-foot">
               ${avatarHTML(cand, 'bar-avatar')}
-              <div class="bar-name">${esc(cand.name)}</div>
+              <div class="bar-name">${nameSpans(cand.name)}</div>
             </div>
           </div>
         `).join('')}
@@ -716,6 +779,19 @@ function renderSetup() {
         Ehdokkaan poistaminen ei poista jo kirjattuja ääniä toisilta ehdokkailta.
       </div>
     </div>
+    <div class="setup-panel">
+      <h3 class="sp-h">Salasanat</h3>
+      <p class="hint" style="margin-top:0">Jätä tyhjäksi jos et halua vaihtaa. Muutos koskee kaikkia koneita.</p>
+      <div class="field">
+        <label for="pwCountInput">Ääntenlaskun salasana</label>
+        <input type="text" id="pwCountInput" placeholder="uusi laskennan salasana" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="pwSetupInput">Asetusten salasana</label>
+        <input type="text" id="pwSetupInput" placeholder="uusi asetusten salasana" autocomplete="off" />
+      </div>
+      <button class="btn btn-primary" id="savePwBtn">Tallenna salasanat</button>
+    </div>
     <div class="setup-panel danger-zone">
       <h3>Nollaa äänet</h3>
       <p>Poistaa kaikki lasketut äänet kaikilta koneilta. Ehdokkaat säilyvät. Tätä ei voi perua.</p>
@@ -731,6 +807,7 @@ function renderSetup() {
     wrap.innerHTML = draft.map((c, i) => `
       <div class="cand-row" data-i="${i}">
         <span class="swatch" style="background:${c.color}" title="Vaihda väri"></span>
+        <input type="text" class="num-in" value="${esc(c.number || '')}" placeholder="nro" maxlength="4" title="Ehdokasnumero" aria-label="Ehdokasnumero" />
         <label class="photo-btn" style="--c:${c.color}" title="${c.photo ? 'Vaihda kuva' : 'Lisää kuva'}">
           ${c.photo ? `<img src="${c.photo}" alt="">` : '<span class="ph">Kuva</span>'}
           <input type="file" accept="image/*" hidden />
@@ -744,6 +821,7 @@ function renderSetup() {
     wrap.querySelectorAll('.cand-row').forEach(row => {
       const i = +row.dataset.i;
       row.querySelector('.name-in').addEventListener('input', e => draft[i].name = e.target.value);
+      row.querySelector('.num-in').addEventListener('input', e => draft[i].number = e.target.value);
       row.querySelector('.rm').addEventListener('click', () => { draft.splice(i, 1); drawRows(); });
       row.querySelector('.swatch').addEventListener('click', () => {
         const idx = PALETTE.indexOf(draft[i].color);
@@ -764,8 +842,10 @@ function renderSetup() {
   drawRows();
 
   app.querySelector('#addBtn').addEventListener('click', () => {
+    let maxNum = 1;
+    draft.forEach(c => { const n = parseInt(c.number, 10); if (!isNaN(n) && n > maxNum) maxNum = n; });
     draft.push({ id: 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-                 name: '', color: PALETTE[draft.length % PALETTE.length], photo: null });
+                 name: '', color: PALETTE[draft.length % PALETTE.length], photo: null, number: String(maxNum + 1) });
     drawRows();
   });
   app.querySelector('#clearBtn').addEventListener('click', () => { draft = []; drawRows(); });
@@ -773,12 +853,23 @@ function renderSetup() {
   app.querySelector('#saveBtn').addEventListener('click', () => {
     const title = app.querySelector('#titleInput').value.trim() || 'Presidentinvaalit';
     const cleaned = draft
-      .map(c => ({ id: c.id, name: c.name.trim(), color: c.color, photo: c.photo || null }))
+      .map(c => ({ id: c.id, name: c.name.trim(), color: c.color, photo: c.photo || null, number: String(c.number || '').trim() }))
       .filter(c => c.name);
     if (!cleaned.length) { toast('Lisää vähintään yksi ehdokas', '#c8102e'); return; }
     saveMeta(title, cleaned);
     toast('Tallennettu', '#178a3f');
     location.hash = '#/count';
+  });
+
+  app.querySelector('#savePwBtn').addEventListener('click', () => {
+    const pc = app.querySelector('#pwCountInput').value.trim();
+    const ps = app.querySelector('#pwSetupInput').value.trim();
+    if (!pc && !ps) { toast('Anna vähintään yksi uusi salasana', '#c8102e'); return; }
+    if (pc) savePassword('count', pc);
+    if (ps) savePassword('setup', ps);
+    app.querySelector('#pwCountInput').value = '';
+    app.querySelector('#pwSetupInput').value = '';
+    toast('Salasanat päivitetty', '#178a3f');
   });
 
   app.querySelector('#resetVotesBtn').addEventListener('click', confirmReset);
