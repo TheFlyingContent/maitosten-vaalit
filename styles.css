@@ -247,7 +247,7 @@ html, body {
   background: var(--c, var(--blue));
   border-radius: 8px 8px 0 0;
   height: 0;
-  min-height: 48px;                 /* 0 ääntä: numero mahtuu kokonaan pylvääseen */
+  min-height: 40px;                 /* varmuusraja; korkeus lasketaan pikseleinä JS:ssä */
   transition: height .6s cubic-bezier(.22,.61,.36,1);
   position: relative;
   box-shadow: inset 0 -6px 12px rgba(0,0,0,.12);
@@ -347,7 +347,7 @@ body.fs .cand-name { font-size: 20px; }
 body.fs .chart { padding: 20px 26px; }
 body.fs .bars { height: calc(100vh - 150px); }
 body.fs #resEmpty { display: none !important; }
-body.fs .bar { min-height: 66px; }        /* isompi tyhjä aloituspylväs kokonäytössä */
+body.fs .bar { min-height: 60px; }        /* varmuusraja; korkeus pikseleinä JS:ssä */
 body.fs .bar-val { font-size: clamp(22px, 2.6vw, 46px); }
 body.fs .bar-avatar { width: 84px; height: 112px; }
 /* Kokonäytössä nimi kahdella rivillä (etunimi ylhäällä, sukunimi alhaalla) -> pilarit tasakokoiset */

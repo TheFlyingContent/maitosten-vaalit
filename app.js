@@ -520,11 +520,20 @@ function renderHome() {
 }
 
 /* ---------------- Ääntenlasku ---------------- */
+function byNumber(a, b) {
+  const na = parseInt(a.number, 10), nb = parseInt(b.number, 10);
+  if (isNaN(na) && isNaN(nb)) return 0;
+  if (isNaN(na)) return 1;            // numerottomat loppuun
+  if (isNaN(nb)) return -1;
+  return na - nb;
+}
+
 function renderCount() {
   if (!state.candidates.length) {
     app.innerHTML = emptyCandidates();
     return;
   }
+  const ordered = [...state.candidates].sort(byNumber);   // laskennassa numerojärjestys
   app.innerHTML = `
     <div class="page-head">
       <h1>Ääntenlasku</h1>
@@ -541,7 +550,7 @@ function renderCount() {
       </div>
     </div>
     <div class="cand-grid">
-      ${state.candidates.map(cand => `
+      ${ordered.map(cand => `
         <button class="cand-card" style="--c:${cand.color}" data-id="${cand.id}">
           ${numberBadge(cand)}
           <span class="cand-meta">
@@ -558,13 +567,7 @@ function renderCount() {
       confirmVote(cand);
     });
   });
-  app.querySelector('#undoBtn').addEventListener('click', () => {
-    const removed = undoLast();
-    if (removed) {
-      const cand = state.candidates.find(x => x.id === removed.id);
-      toast(`Kumottu${cand ? ': ' + cand.name : ''}`, cand ? cand.color : '#c8102e');
-    }
-  });
+  app.querySelector('#undoBtn').addEventListener('click', confirmUndo);
   app.querySelector('#fsBtnCount').addEventListener('click', () =>
     isFsHash() ? exitFullscreen() : enterFullscreen());
 }
@@ -587,6 +590,43 @@ function confirmVote(cand) {
       closeModal();
       flashCard(cand.id);
       toast(`Ääni kirjattu: ${cand.name}`, cand.color);
+    },
+    cancel: closeModal,
+  });
+}
+
+/* Mikä ääni kumoutuisi seuraavaksi (poistamatta) — vahvistusta varten */
+function peekUndoCandidate() {
+  let id = null;
+  if (MODE === 'cloud') { const mine = myUndoable(); if (mine.length) id = mine[mine.length - 1].id; }
+  else if (state.log.length) id = state.log[state.log.length - 1].id;
+  if (!id) return null;
+  return state.candidates.find(x => x.id === id)
+    || { id, name: '(poistettu ehdokas)', color: '#6c757d', number: '?' };
+}
+
+function confirmUndo() {
+  const cand = peekUndoCandidate();
+  if (!cand) return;   // ei kumottavaa
+  openModal(`
+    <div class="m-eyebrow">Kumoa viimeisin ääni</div>
+    <div class="m-cand">
+      ${numberBadge(cand)}
+      <span class="n">${esc(cand.name)}</span>
+    </div>
+    <div class="m-q">Poistetaanko tälle ehdokkaalle viimeksi kirjattu ääni?${MODE === 'cloud' ? ' (tältä koneelta)' : ''}</div>
+    <div class="m-actions">
+      <button class="btn btn-ghost" data-act="cancel">Peruuta</button>
+      <button class="btn btn-danger" data-act="ok">Kumoa ääni</button>
+    </div>
+  `, {
+    ok: () => {
+      const removed = undoLast();
+      closeModal();
+      if (removed) {
+        const c = state.candidates.find(x => x.id === removed.id);
+        toast(`Kumottu${c ? ': ' + c.name : ''}`, c ? c.color : '#c8102e');
+      }
     },
     cancel: closeModal,
   });
@@ -701,12 +741,19 @@ function renderResults() {
   const emptyEl = app.querySelector('#resEmpty');
   if (emptyEl) emptyEl.style.display = total === 0 ? '' : 'none';
 
+  const trackEl = app.querySelector('.bar-track');
+  const trackH = trackEl ? trackEl.clientHeight : 0;
+  const MINPX = isFs ? 62 : 42;                 // 0-pylvään perustaso (numero mahtuu sisään)
   list.forEach(cand => {
     const col = app.querySelector(`.bar-col[data-id="${cand.id}"]`);
     if (!col) return;
     const n = c[cand.id];
-    col.querySelector('.bar').style.height = (n / ceiling * 100) + '%';
-    col.querySelector('.bar-val').textContent = n;
+    const bar = col.querySelector('.bar');
+    // Ensimmäinenkin ääni nostaa selvästi perustason yläpuolelle; kasvaa katosta ylöspäin
+    bar.style.height = (trackH > MINPX)
+      ? Math.round(n <= 0 ? MINPX : MINPX + (n / ceiling) * (trackH - MINPX)) + 'px'
+      : (n / ceiling * 100) + '%';
+    bar.querySelector('.bar-val').textContent = n;
     col.classList.toggle('leader', n > 0 && n === maxCount);
   });
 }
