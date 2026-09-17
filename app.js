@@ -262,12 +262,10 @@ function renderHome() {
     </div>
     <div class="home-grid">
       <a class="home-card" href="#/count">
-        <span class="ico">🗳️</span>
         <h2>Ääntenlasku</h2>
         <p>Klikkaa ehdokasta, vahvista ääni erikseen ja kirjaa se. Vahinkoäänet estetään vahvistuksella ja voit kumota viimeisimmän.</p>
       </a>
       <a class="home-card" href="#/results">
-        <span class="ico">📊</span>
         <h2>Äänten katsominen</h2>
         <p>Pylväsdiagrammi kaikkien ehdokkaiden äänistä — kuten oikeissa presidentinvaaleissa. Avaa tämä isolle näytölle.</p>
       </a>
@@ -300,7 +298,7 @@ function renderCount() {
     <div class="count-bar">
       <div class="counted-pill">Ääniä laskettu: <b>${totalVotes()}</b></div>
       <div class="count-actions">
-        <button class="btn btn-ghost" id="undoBtn" ${canUndo() ? '' : 'disabled'}>↩︎ Kumoa viimeisin${MODE === 'cloud' ? ' (tällä koneella)' : ''}</button>
+        <button class="btn btn-ghost" id="undoBtn" ${canUndo() ? '' : 'disabled'}>Kumoa viimeisin${MODE === 'cloud' ? ' (tällä koneella)' : ''}</button>
         <button class="btn btn-ghost" id="resetBtn" ${totalVotes() ? '' : 'disabled'}>Nollaa laskenta</button>
       </div>
     </div>
@@ -386,9 +384,12 @@ function niceCeiling(maxCount) {
   return (Math.floor(maxCount / step) + 1) * step;
 }
 
-function buildResults(list, isFs) {
+function buildResults(ordered, isFs) {
   app.innerHTML = `
-    ${isFs ? '' : `
+    ${isFs ? `
+    <div class="fs-total"><b id="resTotalFs">0</b> ääntä laskettu</div>
+    <button id="fsExit" class="fs-exit" title="Poistu kokonäytöstä (Esc)">✕</button>
+    ` : `
     <div class="results-head">
       <div>
         <h1>${esc(state.title)}</h1>
@@ -399,30 +400,25 @@ function buildResults(list, isFs) {
           <div class="num" id="resTotal">0</div>
           <div class="lbl">Ääntä laskettu</div>
         </div>
-        <button class="btn btn-ghost" id="fsBtn">⛶ Koko näyttö</button>
+        <button class="btn btn-ghost" id="fsBtn">Koko näyttö</button>
       </div>
     </div>`}
     <div class="empty-note" id="resEmpty"><h3>Ei vielä ääniä</h3>Kun laskenta alkaa, pylväät kasvavat tähän reaaliajassa.</div>
     <div class="chart">
       <div class="bars">
-        ${list.map(cand => `
+        ${ordered.map(cand => `
           <div class="bar-col" data-id="${cand.id}">
-            <div class="bar-figures">
-              <div class="bar-num" style="color:${cand.color}">0</div>
-              <div class="bar-num-lbl">ääntä</div>
-            </div>
             <div class="bar-track">
-              <div class="bar" style="--c:${cand.color}; height:0%"></div>
+              <div class="bar" style="--c:${cand.color}; height:0%"><span class="bar-val">0</span></div>
             </div>
             <div class="bar-foot">
               ${avatarHTML(cand, 'bar-avatar')}
-              <div class="bar-name"><span class="bar-crown">👑</span>${esc(cand.name)}</div>
+              <div class="bar-name">${esc(cand.name)}</div>
             </div>
           </div>
         `).join('')}
       </div>
     </div>
-    ${isFs ? '<button id="fsExit" class="fs-exit" title="Poistu kokonäytöstä (Esc)">✕</button>' : ''}
   `;
 
   const fsBtn = app.querySelector('#fsBtn');
@@ -435,19 +431,22 @@ function renderResults() {
   const c = counts();
   const total = totalVotes();
   const isFs = location.hash.includes('fs');
-  const list = state.candidates;               // kiinteä järjestys -> pylväät kasvavat paikallaan sulavasti
+  const list = state.candidates;
+  const ranked = [...list].sort((a, b) => c[b.id] - c[a.id]);   // eniten ääniä vasemmalle
   const maxCount = Math.max(0, ...list.map(x => c[x.id]));
   const ceiling = niceCeiling(maxCount);
 
-  // Rakenna luuranko vain kun rakenne muuttuu; muuten päivitä arvot paikallaan (animoituu sulavasti)
+  // Rakenna luuranko vain kun ehdokasjoukko / kokonäyttö muuttuu; muuten päivitä paikallaan
   const sig = JSON.stringify(list.map(x => [x.id, x.name, x.color, !!x.photo])) + '|' + isFs;
   if (sig !== resultsSig) {
-    buildResults(list, isFs);
+    buildResults(ranked, isFs);
     resultsSig = sig;
     void app.offsetHeight;                      // pakota asettelu, jotta ensimmäinenkin kasvu animoituu 0:sta
+  } else {
+    reorderBars(ranked.map(x => x.id));         // animoi pylväät oikeaan järjestykseen
   }
 
-  const totalEl = app.querySelector('#resTotal');
+  const totalEl = app.querySelector('#resTotal') || app.querySelector('#resTotalFs');
   if (totalEl) totalEl.textContent = total;
   const emptyEl = app.querySelector('#resEmpty');
   if (emptyEl) emptyEl.style.display = total === 0 ? '' : 'none';
@@ -456,12 +455,40 @@ function renderResults() {
     const col = app.querySelector(`.bar-col[data-id="${cand.id}"]`);
     if (!col) return;
     const n = c[cand.id];
-    const isLeader = n > 0 && n === maxCount;
     col.querySelector('.bar').style.height = (n / ceiling * 100) + '%';
-    col.querySelector('.bar-num').textContent = n;
-    col.querySelector('.bar-num-lbl').textContent = (n === 1 ? 'ääni' : 'ääntä');
-    col.classList.toggle('leader', isLeader);
-    col.querySelector('.bar-crown').style.visibility = isLeader ? 'visible' : 'hidden';
+    col.querySelector('.bar-val').textContent = n;
+    col.classList.toggle('leader', n > 0 && n === maxCount);
+  });
+}
+
+// FLIP: siirrä pylväät sulavasti uuteen järjestykseen (eniten ääniä vasemmalle)
+function reorderBars(rankedIds) {
+  const bars = app.querySelector('.bars');
+  if (!bars) return;
+  const first = new Map();
+  Array.from(bars.children).forEach(col => first.set(col.dataset.id, col.getBoundingClientRect().left));
+  rankedIds.forEach(id => {
+    const col = bars.querySelector(`.bar-col[data-id="${id}"]`);
+    if (col) bars.appendChild(col);
+  });
+  const deltas = new Map();
+  let moved = false;
+  rankedIds.forEach(id => {
+    const col = bars.querySelector(`.bar-col[data-id="${id}"]`);
+    if (!col) return;
+    const dx = first.get(id) - col.getBoundingClientRect().left;
+    deltas.set(id, dx);
+    if (dx) moved = true;
+  });
+  if (!moved) return;
+  rankedIds.forEach(id => {
+    const col = bars.querySelector(`.bar-col[data-id="${id}"]`);
+    if (col) { col.style.transition = 'none'; col.style.transform = `translateX(${deltas.get(id)}px)`; }
+  });
+  void bars.offsetWidth;
+  rankedIds.forEach(id => {
+    const col = bars.querySelector(`.bar-col[data-id="${id}"]`);
+    if (col) { col.style.transition = 'transform .5s cubic-bezier(.22,.61,.36,1)'; col.style.transform = ''; }
   });
 }
 
@@ -513,7 +540,7 @@ function renderSetup() {
       <div class="cand-row" data-i="${i}">
         <span class="swatch" style="background:${c.color}" title="Vaihda väri"></span>
         <label class="photo-btn" style="--c:${c.color}" title="${c.photo ? 'Vaihda kuva' : 'Lisää kuva'}">
-          ${c.photo ? `<img src="${c.photo}" alt="">` : '<span class="ph">📷</span>'}
+          ${c.photo ? `<img src="${c.photo}" alt="">` : '<span class="ph">Kuva</span>'}
           <input type="file" accept="image/*" hidden />
         </label>
         ${c.photo ? '<button class="photo-rm" title="Poista kuva">✕</button>' : ''}
